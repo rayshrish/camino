@@ -1,0 +1,1119 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for CAMINO, a Python package for modelling and inferring wavefront aberrations from JWST/NIRCam observations.">
+      
+      
+        <meta name="author" content="rayshrish">
+      
+      
+        <link rel="canonical" href="https://rayshrish.github.io/camino/dev/concepts/">
+      
+      
+        <link rel="prev" href="../installation/">
+      
+      
+        <link rel="next" href="../examples/worked_example/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.62">
+    
+    
+      
+        <title>Concepts & Workflow - camino documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.ce62732f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.812a03bb.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="amber" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#concepts-and-workflow" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="camino documentation" class="md-header__button md-logo" aria-label="camino documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            camino documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Concepts & Workflow
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="amber" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="amber" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/rayshrish/camino" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    rayshrish/camino
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="camino documentation" class="md-nav__button md-logo" aria-label="camino documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    camino documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/rayshrish/camino" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"/></svg>
+  </div>
+  <div class="md-source__repository">
+    rayshrish/camino
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Concepts & Workflow
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Concepts & Workflow
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#physical-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Physical context
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optical-representation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Optical representation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#defocus" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Defocus
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detector-sampling-and-image-formation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Detector sampling and image formation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#psf-localisation-and-cutout-extraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        PSF localisation and cutout extraction
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-parameterisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        System parameterisation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opd-and-exposure-association" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        OPD and exposure association
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#end-to-end-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        End-to-end workflow
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameter-keying" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Parameter keying
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/worked_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Worked Example
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  API
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../API/overview.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Overview
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+    <a href="https://github.com/rayshrish/camino/edit/main/docs/concepts.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/rayshrish/camino/raw/main/docs/concepts.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
+
+
+<h1 id="concepts-and-workflow">Concepts and workflow<a class="headerlink" href="#concepts-and-workflow" title="Permanent link">¤</a></h1>
+<p>CAMINO performs forward modelling and inference of defocused point-spread
+functions (PSFs) from telescope exposures. The model connects the optical
+state of the telescope, represented by the amplitude and phase of a
+pupil-plane complex field, to the measured detector image through physical
+optical propagation, detector sampling, and image-formation effects.</p>
+<p>This page collects the assumptions, notation, and background needed to
+understand the CAMINO model and the associated inference workflow.</p>
+<h2 id="physical-context">Physical context<a class="headerlink" href="#physical-context" title="Permanent link">¤</a></h2>
+<p>The wavefront-sensing and control (WFC&amp;S) problem for a segmented telescope
+spans a large dynamic range, from the coarse misalignment immediately after
+deployment to the final diffraction-limited state. For JWST, early deployment
+stages used geometric and centroid-based techniques to locate and position
+the segment images. Large coarse piston errors were subsequently corrected
+using dispersed fringe sensing with the Dispersed Hartman Sensor, which
+measures relative segment piston through wavelength-dependent interference
+patterns. Global solutions were then obtained through least-squares
+reconstruction across the segments.</p>
+<p>CAMINO addresses the later, high-precision regime in which the optical state
+can be inferred from the detailed morphology of defocused PSFs. The weak-lens
+observations considered here produce extended, approximately annular PSFs
+rather than sharply peaked in-focus images. This makes robust localisation
+and physically consistent optical propagation important parts of the
+inference process.</p>
+<h2 id="optical-representation">Optical representation<a class="headerlink" href="#optical-representation" title="Permanent link">¤</a></h2>
+<h3 id="pupil-plane-field">Pupil-plane field<a class="headerlink" href="#pupil-plane-field" title="Permanent link">¤</a></h3>
+<p>The optical field at the entrance pupil is represented as a complex field</p>
+<div class="arithmatex">\[
+U(x,y) = A(x,y)\,\exp\left[i\,\phi(x,y)\right],
+\]</div>
+<p>where:</p>
+<ul>
+<li><span class="arithmatex">\(A(x,y)\)</span> is the amplitude transmission of the pupil;</li>
+<li><span class="arithmatex">\(\phi(x,y)\)</span> is the optical phase;</li>
+<li><span class="arithmatex">\(x\)</span> and <span class="arithmatex">\(y\)</span> are transverse coordinates in the pupil plane.</li>
+</ul>
+<p>The phase is determined by the optical path difference (OPD). Thus the
+pupil-plane state contains both the amplitude structure of the aperture and
+the phase structure of the wavefront.</p>
+<p>The forward model propagates this complex field to the detector plane. Because
+the complex field is retained during propagation, both amplitude and phase
+information contribute to the resulting intensity pattern.</p>
+<h3 id="abcd-matrices-and-linear-canonical-transforms">ABCD matrices and linear canonical transforms<a class="headerlink" href="#abcd-matrices-and-linear-canonical-transforms" title="Permanent link">¤</a></h3>
+<p>CAMINO uses a physical-optics description based on the scalar diffraction
+approximation. Optical propagation is represented using the Collins
+diffraction integral in the framework of linear canonical transforms (LCTs).</p>
+<p>A first-order optical system is described by an ABCD ray-transfer matrix,</p>
+<div class="arithmatex">\[
+\begin{pmatrix}
+x_2 \\
+\theta_2
+\end{pmatrix}
+=
+\begin{pmatrix}
+A &amp; B \\
+C &amp; D
+\end{pmatrix}
+\begin{pmatrix}
+x_1 \\
+\theta_1
+\end{pmatrix},
+\]</div>
+<p>where <span class="arithmatex">\(x\)</span> is the transverse spatial coordinate and <span class="arithmatex">\(\theta\)</span> is the
+propagation angle relative to the optical axis.</p>
+<p>For a general ABCD system with <span class="arithmatex">\(B\ne0\)</span>, the propagated field can be written
+as the Collins diffraction integral,</p>
+<div class="arithmatex">\[
+U(x') =
+\frac{1}{i\lambda B}
+\exp\left(\frac{i\pi D x'^2}{\lambda B}\right)
+\int U(x)
+\exp\left(\frac{i\pi A x^2}{\lambda B}\right)
+\exp\left(-\frac{i2\pi xx'}{\lambda B}\right)\,dx.
+\]</div>
+<p>Here:</p>
+<ul>
+<li><span class="arithmatex">\(U(x)\)</span> and <span class="arithmatex">\(U(x')\)</span> are the complex fields at the input and output planes;</li>
+<li><span class="arithmatex">\(x\)</span> and <span class="arithmatex">\(x'\)</span> are the transverse coordinates in those planes;</li>
+<li><span class="arithmatex">\(\lambda\)</span> is the wavelength;</li>
+<li><span class="arithmatex">\(A\)</span>, <span class="arithmatex">\(B\)</span>, <span class="arithmatex">\(C\)</span>, and <span class="arithmatex">\(D\)</span> are the ABCD matrix elements;</li>
+<li><span class="arithmatex">\(B\)</span> has units of length and sets the scale of the diffraction integral.</li>
+</ul>
+<p>The quadratic phase factors are the input and output chirps. The cross-term
+contains the Fourier-transform kernel, with spatial-frequency scaling set by
+<span class="arithmatex">\(\lambda B\)</span>.</p>
+<p>For the optical system considered here, propagation is represented by a
+thin lens followed by free-space propagation. The corresponding matrices are</p>
+<div class="arithmatex">\[
+M_{\mathrm{lens}}(f) =
+\begin{pmatrix}
+1 &amp; 0 \\
+-1/f &amp; 1
+\end{pmatrix},
+\qquad
+M_{\mathrm{free}}(L) =
+\begin{pmatrix}
+1 &amp; L \\
+0 &amp; 1
+\end{pmatrix},
+\]</div>
+<p>where <span class="arithmatex">\(f\)</span> is the focal length and <span class="arithmatex">\(L\)</span> is the propagation distance from the
+lens to the detector plane. The complete system is therefore</p>
+<div class="arithmatex">\[
+M =
+M_{\mathrm{free}}(L)\,M_{\mathrm{lens}}(f)
+=
+\begin{pmatrix}
+1-L/f &amp; L \\
+-1/f &amp; 1
+\end{pmatrix}.
+\]</div>
+<p>This matrix determines the LCT parameters used for numerical propagation.</p>
+<h3 id="matrix-fourier-transform">Matrix Fourier transform<a class="headerlink" href="#matrix-fourier-transform" title="Permanent link">¤</a></h3>
+<p>The Collins integral is evaluated numerically using a separable
+chirp-transform-chirp representation,</p>
+<div class="arithmatex">\[
+U_{\mathrm{out}}
+=
+C_{\mathrm{post}}\,
+\mathcal{F}_{\mathrm{MFT}}
+\left[
+C_{\mathrm{pre}}\,U_{\mathrm{in}}
+\right],
+\]</div>
+<p>where <span class="arithmatex">\(C_{\mathrm{pre}}\)</span> and <span class="arithmatex">\(C_{\mathrm{post}}\)</span> are the quadratic phase
+factors determined by the ABCD coefficients and
+<span class="arithmatex">\(\mathcal{F}_{\mathrm{MFT}}\)</span> is a matrix Fourier transform (MFT).</p>
+<p>An MFT is used rather than a fast Fourier transform (FFT) because the input
+and output sampling rates can be specified independently. This allows the
+numerical detector grid to be matched directly to the physical detector
+pixel scale and optical geometry, rather than imposing the sampling
+relationship associated with an FFT.</p>
+<p>The propagation operators are differentiable, allowing derivatives of the
+forward model with respect to optical and exposure-level parameters.</p>
+<h2 id="defocus">Defocus<a class="headerlink" href="#defocus" title="Permanent link">¤</a></h2>
+<p>Defocus is represented physically by changing the propagation distance rather
+than by inserting an approximate quadratic phase term into the pupil.</p>
+<p>In the absence of defocus, the detector plane is at the nominal focal plane,
+so</p>
+<div class="arithmatex">\[
+L=f.
+\]</div>
+<p>A defocus displacement <span class="arithmatex">\(\Delta z\)</span> is represented by</p>
+<div class="arithmatex">\[
+L=f+\Delta z.
+\]</div>
+<p>The corresponding optical system matrix is</p>
+<div class="arithmatex">\[
+M(\Delta z)
+=
+M_{\mathrm{free}}(f+\Delta z)\,
+M_{\mathrm{lens}}(f)
+=
+\begin{pmatrix}
+1-(f+\Delta z)/f &amp; f+\Delta z \\
+-1/f &amp; 1
+\end{pmatrix}.
+\]</div>
+<p>This treats defocus as a displacement of the observation plane and preserves
+the full propagation operator. It therefore does not rely on the
+near-focus approximations associated with representing defocus solely as a
+quadratic pupil-plane phase.</p>
+<p>For weak-lensing NIRCam observations, the nominal defocus states are discrete
+pupil configurations such as <strong>WLP8</strong> and <strong>WLM8</strong>. The corresponding
+<span class="arithmatex">\(\Delta z\)</span> values are nevertheless exposure-dependent model parameters and
+can be refined during inference to account for uncertainty in the actual
+optical configuration.</p>
+<h2 id="detector-sampling-and-image-formation">Detector sampling and image formation<a class="headerlink" href="#detector-sampling-and-image-formation" title="Permanent link">¤</a></h2>
+<h3 id="detector-plane-sampling">Detector-plane sampling<a class="headerlink" href="#detector-plane-sampling" title="Permanent link">¤</a></h3>
+<p>The propagated field is evaluated on a discrete grid representing the
+physical detector sampling.</p>
+<p>Let:</p>
+<ul>
+<li><span class="arithmatex">\(\theta\)</span> be an angular coordinate on the sky;</li>
+<li><span class="arithmatex">\(x\)</span> be the corresponding physical coordinate in the focal plane;</li>
+<li><span class="arithmatex">\(f\)</span> be the effective focal length.</li>
+</ul>
+<p>Under the paraxial approximation,</p>
+<div class="arithmatex">\[
+x=f\,\theta.
+\]</div>
+<p>For a detector with angular pixel scale <span class="arithmatex">\(\Delta\theta\)</span> in radians per pixel,
+the corresponding physical sampling is</p>
+<div class="arithmatex">\[
+\Delta x=f\,\Delta\theta.
+\]</div>
+<p>CAMINO uses an oversampling factor of <span class="arithmatex">\(s=4\)</span>, giving an effective numerical
+sampling of</p>
+<div class="arithmatex">\[
+\Delta x_{\mathrm{eff}}=\frac{\Delta x}{s}.
+\]</div>
+<p>The propagated field is consequently evaluated on a grid with</p>
+<div class="arithmatex">\[
+N_{\mathrm{out}}=s\,N_{\mathrm{psf}},
+\]</div>
+<p>and spacing <span class="arithmatex">\(\Delta x_{\mathrm{eff}}\)</span> in each dimension.</p>
+<p>The distinction between the optical propagation grid and the native detector
+grid is important: propagation can be performed at an oversampled resolution
+before detector-level transformations are applied.</p>
+<h3 id="psf-and-normalisation">PSF and normalisation<a class="headerlink" href="#psf-and-normalisation" title="Permanent link">¤</a></h3>
+<p>The detector measures intensity corresponding to the squared modulus of the
+propagated complex field,</p>
+<div class="arithmatex">\[
+I_{\mathrm{model}}(x,y)=\left|U(x,y)\right|^2.
+\]</div>
+<p>The resulting PSF is normalised to unit flux over the valid detector region,</p>
+<div class="arithmatex">\[
+P(x,y)
+=
+\frac{I_{\mathrm{model}}(x,y)}
+{\sum_{x,y} I_{\mathrm{model}}(x,y)}.
+\]</div>
+<p>The normalised PSF therefore describes the spatial distribution of the
+source photons independently of the total source flux.</p>
+<p>The observed image is modelled as</p>
+<div class="arithmatex">\[
+I_{\mathrm{obs}}(x,y)
+=
+f\,P(x,y)+b+\epsilon(x,y),
+\]</div>
+<p>where:</p>
+<ul>
+<li><span class="arithmatex">\(f\)</span> is the total source flux;</li>
+<li><span class="arithmatex">\(b\)</span> is a spatially uniform background level;</li>
+<li><span class="arithmatex">\(\epsilon(x,y)\)</span> represents measurement noise.</li>
+</ul>
+<p>For a fixed PSF, the model is linear in <span class="arithmatex">\(f\)</span> and <span class="arithmatex">\(b\)</span>. These two quantities can
+therefore be determined analytically for each exposure using weighted linear
+least squares,</p>
+<div class="arithmatex">\[
+\sum_{x,y}
+\frac{
+\left[I_{\mathrm{obs}}(x,y)-fP(x,y)-b\right]^2
+}{
+\sigma^2(x,y)
+},
+\]</div>
+<p>where <span class="arithmatex">\(\sigma(x,y)\)</span> is the per-pixel uncertainty from the calibrated
+exposure's <code>ERR</code> array.</p>
+<p>Analytically solving for flux and background reduces the dimensionality of
+the optimisation problem. The solution is conditioned on the current PSF
+model and is therefore recomputed as the forward model changes.</p>
+<h3 id="sub-pixel-positioning">Sub-pixel positioning<a class="headerlink" href="#sub-pixel-positioning" title="Permanent link">¤</a></h3>
+<p>Each exposure also has a source position relative to the detector grid,
+represented by a sub-pixel offset</p>
+<div class="arithmatex">\[
+(\delta x,\delta y).
+\]</div>
+<p>Rather than translating the final image as a post-processing operation, this
+offset is incorporated into the pupil-plane field as a phase tilt before
+propagation. Under Fourier optics, this corresponds to a shift of the PSF in
+the image plane.</p>
+<p>This keeps source positioning inside the differentiable forward model and
+ensures that the positional parameters are treated consistently with the
+optical propagation.</p>
+<h3 id="detector-response">Detector response<a class="headerlink" href="#detector-response" title="Permanent link">¤</a></h3>
+<p>After propagation and PSF normalisation, detector effects are represented as
+modular pixel-level transformations. Depending on the instrument model,
+these can include:</p>
+<ul>
+<li>geometric rotations;</li>
+<li>intra-pixel sensitivity variations;</li>
+<li>downsampling to the native detector resolution.</li>
+</ul>
+<p>The resulting forward model maps the pupil-plane optical state to detector
+intensity through a sequence of propagation, sampling, and detector-response
+operations.</p>
+<h2 id="psf-localisation-and-cutout-extraction">PSF localisation and cutout extraction<a class="headerlink" href="#psf-localisation-and-cutout-extraction" title="Permanent link">¤</a></h2>
+<p>The inference operates on fixed-size PSF cutouts extracted from calibrated
+full-frame exposures. The localisation procedure is model-independent and
+is designed for extended, defocused PSFs in crowded fields.</p>
+<h3 id="background-and-source-mask">Background and source mask<a class="headerlink" href="#background-and-source-mask" title="Permanent link">¤</a></h3>
+<p>For each calibrated science image <span class="arithmatex">\(I_{ij}\)</span>, the background level is estimated
+using the median,</p>
+<div class="arithmatex">\[
+m=\operatorname{median}(I_{ij}),
+\]</div>
+<p>and the dispersion is estimated from the median absolute deviation (MAD),</p>
+<div class="arithmatex">\[
+\sigma
+=
+1.4826\,
+\operatorname{median}\left(|I_{ij}-m|\right).
+\]</div>
+<p>Pixels containing significant source flux are identified using an adaptive
+threshold. The usual threshold is approximately <span class="arithmatex">\(5\sigma\)</span>, reduced to about
+<span class="arithmatex">\(3\sigma\)</span> if there is insufficient source support.</p>
+<h3 id="coarse-to-fine-localisation">Coarse-to-fine localisation<a class="headerlink" href="#coarse-to-fine-localisation" title="Permanent link">¤</a></h3>
+<p>An initial flux-weighted centroid is calculated from the full detector frame.
+The centroid is then iteratively refined using successively smaller square
+windows with side lengths</p>
+<div class="arithmatex">\[
+L=1024,\quad512,\quad256\ {\rm pixels}.
+\]</div>
+<p>At each stage, the updated centroid defines the centre of the next window.
+This coarse-to-fine procedure reduces sensitivity to neighbouring sources and
+large-scale background structure while retaining the extended morphology of
+the defocused PSF.</p>
+<p>The final centroid is calculated from the masked flux,</p>
+<div class="arithmatex">\[
+(i_0,j_0)
+=
+\frac{
+\sum_{i,j}M_{ij}I_{ij}(i,j)
+}{
+\sum_{i,j}M_{ij}I_{ij}
+},
+\]</div>
+<p>where <span class="arithmatex">\(M_{ij}\)</span> is the thresholded source mask.</p>
+<h3 id="cutout-convention">Cutout convention<a class="headerlink" href="#cutout-convention" title="Permanent link">¤</a></h3>
+<p>Once the PSF centre has been determined, its coordinates are rounded to the
+nearest detector pixel and a fixed <span class="arithmatex">\(128\times128\)</span> pixel cutout is extracted
+around that location.</p>
+<p>No additional sub-pixel centring is performed at this stage. This avoids
+introducing a translation that could interact with the asymmetric aberration
+pattern of the PSF.</p>
+<p>If the extraction window reaches the detector edge, missing pixels are padded
+with the previously estimated background value <span class="arithmatex">\(m\)</span>.</p>
+<p>The resulting cutouts therefore have a common geometry while retaining the
+complete defocused PSF morphology required by the inference model.</p>
+<h2 id="system-parameterisation">System parameterisation<a class="headerlink" href="#system-parameterisation" title="Permanent link">¤</a></h2>
+<p>The forward model separates parameters describing the underlying optical
+state from exposure-dependent image-formation parameters.</p>
+<h3 id="global-optical-parameters">Global optical parameters<a class="headerlink" href="#global-optical-parameters" title="Permanent link">¤</a></h3>
+<p>The pupil-plane phase, and hence the underlying OPD, is treated as a global
+parameter shared across the exposures in an inference set. This assumes that
+the telescope's underlying optical state does not vary significantly over
+the time span represented by those observations.</p>
+<p>The pupil amplitude can likewise be parameterised to allow small deviations
+from the nominal aperture model. Such variations represent residual
+throughput inhomogeneities and can be regularised to favour physically
+plausible structure consistent with the segmented telescope aperture.</p>
+<h3 id="exposure-dependent-parameters">Exposure-dependent parameters<a class="headerlink" href="#exposure-dependent-parameters" title="Permanent link">¤</a></h3>
+<p>Each exposure may have its own nuisance and configuration parameters,
+including:</p>
+<ul>
+<li>total source flux <span class="arithmatex">\(f\)</span>;</li>
+<li>background level <span class="arithmatex">\(b\)</span>;</li>
+<li>sub-pixel source position <span class="arithmatex">\((\delta x,\delta y)\)</span>;</li>
+<li>defocus offset <span class="arithmatex">\(\Delta z\)</span>.</li>
+</ul>
+<p>This separation allows observations with different image-formation
+conditions to constrain a common underlying wavefront while retaining
+exposure-specific quantities where required.</p>
+<h2 id="opd-and-exposure-association">OPD and exposure association<a class="headerlink" href="#opd-and-exposure-association" title="Permanent link">¤</a></h2>
+<p>The optical state used by the model can be associated with archived
+observations through the telescope wavefront-sensing data.</p>
+<p>A uniform Coordinated Universal Time (UTC) grid can be used to identify the
+nearest OPD solution at a given observation time, using
+<code>load_wss_opd_by_date</code>. OPD metadata can retain the observation ID, filename,
+detector, and optical configuration, allowing the inferred wavefront state
+to be correlated directly with the corresponding archived exposure.</p>
+<p>Duplicate OPD realisations are removed, and OPD values outside the desired
+epoch are excluded.</p>
+<p>For the NIRCam weak-lens configuration considered here, candidate exposures
+are selected from imaging observations using the F212N filter and the WLP8
+and WLM8 pupil elements. Exposures are grouped by pupil configuration and
+sorted by acquisition order. A representative weak-lens pair can then be
+selected by acquisition date, providing a self-consistent, minimally
+redundant pair of focus-diverse images for each sampled wavefront state.</p>
+<h2 id="end-to-end-workflow">End-to-end workflow<a class="headerlink" href="#end-to-end-workflow" title="Permanent link">¤</a></h2>
+<p>The concepts above combine into the following forward-modelling and
+inference workflow:</p>
+<ol>
+<li>
+<p><strong>Load and validate an exposure.</strong><br />
+   Read the calibrated exposure and its associated metadata, including the
+   detector configuration, filter, pupil state, and uncertainty information.</p>
+</li>
+<li>
+<p><strong>Localise the PSF.</strong><br />
+   Estimate the background and source mask, then locate the defocused PSF
+   using the coarse-to-fine centroiding procedure.</p>
+</li>
+<li>
+<p><strong>Extract the cutout.</strong><br />
+   Round the final centre to the nearest detector pixel and extract the
+   standard <span class="arithmatex">\(128\times128\)</span> pixel region, padding detector-edge regions with
+   the estimated background where necessary.</p>
+</li>
+<li>
+<p><strong>Construct the pupil-plane model.</strong><br />
+   Combine the aperture amplitude and the inferred global phase/OPD to form
+   the complex pupil-plane field.</p>
+</li>
+<li>
+<p><strong>Apply exposure-specific parameters.</strong><br />
+   Incorporate the relevant defocus state and sub-pixel source position for
+   the exposure.</p>
+</li>
+<li>
+<p><strong>Propagate the field.</strong><br />
+   Apply the ABCD/LCT propagation, using the MFT implementation to map the
+   pupil-plane sampling onto the detector-plane sampling.</p>
+</li>
+<li>
+<p><strong>Form and normalise the PSF.</strong><br />
+   Compute <span class="arithmatex">\(|U|^2\)</span> and normalise the result to unit flux.</p>
+</li>
+<li>
+<p><strong>Apply detector response.</strong><br />
+   Apply the relevant detector-level transformations, including any
+   geometric, intra-pixel, and downsampling operations.</p>
+</li>
+<li>
+<p><strong>Fit exposure-level flux and background.</strong><br />
+   Given the current PSF, solve analytically for the source flux and
+   background using the calibrated per-pixel uncertainties.</p>
+</li>
+<li>
+<p><strong>Compare model and data.</strong><br />
+    Evaluate the residuals or objective function between the forward-modelled
+    image and the observed PSF cutout.</p>
+</li>
+<li>
+<p><strong>Optimise or diagnose the optical parameters.</strong><br />
+    Update the parameters describing the shared optical state and
+    exposure-dependent quantities, or inspect the current model without
+    optimisation.</p>
+</li>
+<li>
+<p><strong>Inspect convergence and residuals.</strong><br />
+    Examine the inferred parameters, model PSFs, and residual structure to
+    diagnose whether the model adequately describes the observed exposures.</p>
+</li>
+</ol>
+<h2 id="parameter-keying">Parameter keying<a class="headerlink" href="#parameter-keying" title="Permanent link">¤</a></h2>
+<p>CAMINO stores model parameters in a way that distinguishes both their
+physical meaning and the exposures to which they apply.</p>
+<p>A parameter can therefore be associated with an individual exposure or
+shared across multiple exposures. The <code>get_key</code> and <code>map_param</code> mechanisms
+provide the interface for defining and accessing these relationships.</p>
+<p>Conceptually, parameter keying separates two questions:</p>
+<ul>
+<li><strong>What physical quantity does this parameter represent?</strong></li>
+<li><strong>Which observations share the same value of that quantity?</strong></li>
+</ul>
+<p>Global optical quantities such as the pupil-plane phase can therefore be
+shared across a focus-diverse observation set, while quantities such as flux,
+background, position, and residual defocus can remain exposure-specific.</p>
+<p>This parameter-sharing structure is part of the inference model rather than
+a post-processing convention: it determines which observations jointly
+constrain each physical parameter.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["navigation.top","navigation.indexes","content.code.copy","toc.integrate","content.action.edit","content.action.view"],"redirect":null,"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.8dcc8e9c.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
