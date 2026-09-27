@@ -93,14 +93,40 @@ onp = np
 EPS = 1e-30
 _FILTER_LOCK = RLock()
 PHYSICAL_TO_LABELS = {
-    1: (1,), 2: (2, 4), 3: (3, 5), 4: (6,), 5: (7,), 6: (8,),
-    7: (9,), 8: (10,), 9: (11,), 10: (12,), 11: (13,), 12: (14,),
-    13: (15,), 14: (16,), 15: (17, 18), 16: (21, 22), 17: (19,), 18: (20,),
+    1: (1,),
+    2: (2, 4),
+    3: (3, 5),
+    4: (6,),
+    5: (7,),
+    6: (8,),
+    7: (9,),
+    8: (10,),
+    9: (11,),
+    10: (12,),
+    11: (13,),
+    12: (14,),
+    13: (15,),
+    14: (16,),
+    15: (17, 18),
+    16: (21, 22),
+    17: (19,),
+    18: (20,),
 }
 
-__all__ = ["FitConfig", "FitProblem", "FitResult", "StageHistory", "load_data",
-           "fit_data", "continue_fit", "compare_with_mast", "get_mast_wss_path",
-           "PHYSICAL_TO_LABELS", "NIRCamFresnelOptics", "NRCDetectorLong"]
+__all__ = [
+    "FitConfig",
+    "FitProblem",
+    "FitResult",
+    "StageHistory",
+    "load_data",
+    "fit_data",
+    "continue_fit",
+    "compare_with_mast",
+    "get_mast_wss_path",
+    "PHYSICAL_TO_LABELS",
+    "NIRCamFresnelOptics",
+    "NRCDetectorLong",
+]
 
 
 @dataclass(frozen=True)
@@ -111,6 +137,7 @@ class FitConfig:
     the preset. Loss curves appear after every BFGS/L-BFGS-B invocation;
     show_plots=False suppresses display, but all histories are still retained.
     """
+
     fit_mode: str = "pixel"
     fit_npix: int | None = None
     orientation: str | None = None
@@ -134,7 +161,7 @@ class FitConfig:
     position_scale: float = 1e-4
     skip_grid_init: bool = False
     # Piston, tip, tilt bounds; the seed grid uses [lower, 0, upper].
-    ptt_bounds_nm: tuple = ((-3500., 3500.),) * 3
+    ptt_bounds_nm: tuple = ((-3500.0, 3500.0),) * 3
     local_ptt_maxiter: int = 50
     joint_ptt_maxiter: int = 100
     ptt_gtol: float = 1e-3
@@ -145,7 +172,7 @@ class FitConfig:
     stage2_maxls: int = 20
     stage2_maxfun: int = 15000
     lambda_qv: float = 6e-3
-    lambda_l1: float = 0.0       # pixel mode; OPD is in metres in this penalty
+    lambda_l1: float = 0.0  # pixel mode; OPD is in metres in this penalty
     lambda_pixel_l2: float | None = None
     lambda_global_plane: float | None = None
     lambda_boundary_mix: float = 0.0
@@ -170,15 +197,29 @@ class FitConfig:
                 object.__setattr__(self, key, value)
         if self.orientation not in ("pupil_flip", "output_flip"):
             raise ValueError("Unknown optical orientation")
-        for name in ("fit_npix", "n_wavels", "pupil_downsample_factor", "psf_npixels",
-                     "oversample", "stage2_maxiter", "stage2_maxcor", "stage2_maxls", "stage2_maxfun"):
+        for name in (
+            "fit_npix",
+            "n_wavels",
+            "pupil_downsample_factor",
+            "psf_npixels",
+            "oversample",
+            "stage2_maxiter",
+            "stage2_maxcor",
+            "stage2_maxls",
+            "stage2_maxfun",
+        ):
             value = getattr(self, name)
             if not isinstance(value, (int, np.integer)) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
         if self.fit_npix > self.psf_npixels:
             raise ValueError("fit_npix cannot exceed psf_npixels")
-        for name in ("stage1_sgd_steps", "position_maxiter", "position_refit_maxiter",
-                     "local_ptt_maxiter", "joint_ptt_maxiter"):
+        for name in (
+            "stage1_sgd_steps",
+            "position_maxiter",
+            "position_refit_maxiter",
+            "local_ptt_maxiter",
+            "joint_ptt_maxiter",
+        ):
             value = getattr(self, name)
             if not isinstance(value, (int, np.integer)) or value < 0:
                 raise ValueError(f"{name} must be a nonnegative integer")
@@ -188,20 +229,37 @@ class FitConfig:
         if len(self.defocus_nm) != 2 or not np.all(np.isfinite(self.defocus_nm)):
             raise ValueError("defocus_nm must contain two finite values in nm")
         if len(self.ptt_bounds_nm) != 3 or any(
-            len(b) != 2 or not np.all(np.isfinite(b)) or not b[0] <= 0 <= b[1]
-            or b[0] >= b[1] for b in self.ptt_bounds_nm
+            len(b) != 2
+            or not np.all(np.isfinite(b))
+            or not b[0] <= 0 <= b[1]
+            or b[0] >= b[1]
+            for b in self.ptt_bounds_nm
         ):
             raise ValueError("Each PTT bound must straddle zero and have lower < upper")
         if len(self.sgd_learning_rates) != 4 or len(self.sgd_start_steps) != 4:
             raise ValueError("Four SGD learning rates and start steps are required")
         if not 0 <= self.display_transmission_threshold <= 1:
-            raise ValueError("display_transmission_threshold must be between zero and one")
-        for name in ("ptt_gtol", "stage2_gtol", "stage2_ftol", "lambda_qv", "lambda_l1",
-                     "lambda_pixel_l2", "lambda_global_plane", "lambda_boundary_mix"):
+            raise ValueError(
+                "display_transmission_threshold must be between zero and one"
+            )
+        for name in (
+            "ptt_gtol",
+            "stage2_gtol",
+            "stage2_ftol",
+            "lambda_qv",
+            "lambda_l1",
+            "lambda_pixel_l2",
+            "lambda_global_plane",
+            "lambda_boundary_mix",
+        ):
             if not np.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
-        if not advanced and any((self.lambda_pixel_l2, self.lambda_global_plane, self.lambda_boundary_mix)):
-            raise ValueError("Pixel L2/global-plane/boundary penalties belong to ptt_pixel mode")
+        if not advanced and any(
+            (self.lambda_pixel_l2, self.lambda_global_plane, self.lambda_boundary_mix)
+        ):
+            raise ValueError(
+                "Pixel L2/global-plane/boundary penalties belong to ptt_pixel mode"
+            )
         if advanced and self.lambda_l1:
             raise ValueError("lambda_l1 belongs to pixel mode")
 
@@ -210,10 +268,14 @@ class FitConfig:
         return cls(fit_mode=fit_mode, **overrides)
 
     def stage2_options(self, maxiter=None):
-        return dict(maxiter=self.stage2_maxiter if maxiter is None else maxiter,
-                    gtol=self.stage2_gtol, ftol=self.stage2_ftol,
-                    maxcor=self.stage2_maxcor, maxls=self.stage2_maxls,
-                    maxfun=self.stage2_maxfun)
+        return dict(
+            maxiter=self.stage2_maxiter if maxiter is None else maxiter,
+            gtol=self.stage2_gtol,
+            ftol=self.stage2_ftol,
+            maxcor=self.stage2_maxcor,
+            maxls=self.stage2_maxls,
+            maxfun=self.stage2_maxfun,
+        )
 
 
 def _resolve_config(fit_mode=None, config=None):
@@ -227,6 +289,7 @@ def _resolve_config(fit_mode=None, config=None):
 @dataclass
 class StageHistory:
     """One optimiser invocation, including its true accepted-iterate losses."""
+
     name: str
     method: str
     initial_loss: float = np.nan
@@ -241,6 +304,7 @@ class StageHistory:
 
     def plot(self, show=True):
         import matplotlib.pyplot as plt
+
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(np.arange(len(self.losses) + 1), [self.initial_loss, *self.losses])
         ax.set(xlabel="Iteration (0 = initial)", ylabel="Loss", title=self.name)
@@ -256,28 +320,40 @@ def _local_filter(filter_path, filter_name, fit_mode):
     """Scope the legacy CAMINO filter redirection to this fit only."""
     with _FILTER_LOCK:
         original = cam.calc_throughput
-        original_unwrapped = getattr(cam, "_notebook_original_calc_throughput", original)
+        original_unwrapped = getattr(
+            cam, "_notebook_original_calc_throughput", original
+        )
         if fit_mode == "pixel":
             # Exact Angstrom/bin-integration convention in the pixel notebook.
             wl_np, tp_np = np.loadtxt(filter_path, unpack=True)
-            if wl_np.ndim != 1 or not np.all(np.isfinite(wl_np)) or not np.all(np.isfinite(tp_np)):
+            if (
+                wl_np.ndim != 1
+                or not np.all(np.isfinite(wl_np))
+                or not np.all(np.isfinite(tp_np))
+            ):
                 raise ValueError("Filter table must have two finite columns")
             wl, tp = jnp.asarray(wl_np), jnp.asarray(tp_np)
 
             def local_throughput(filt, nwavels=1):
                 edges = jnp.linspace(wl.min(), wl.max(), nwavels + 1)
                 wavels = jnp.linspace(wl.min(), wl.max(), 2 * nwavels + 1)[1::2]
-                areas = jnp.stack([
-                    jsp.integrate.trapezoid(
-                        y=jnp.where((edges[i] < wl) & (wl < edges[i + 1]), tp, 0.), x=wl
-                    ) for i in range(nwavels)
-                ])
+                areas = jnp.stack(
+                    [
+                        jsp.integrate.trapezoid(
+                            y=jnp.where((edges[i] < wl) & (wl < edges[i + 1]), tp, 0.0),
+                            x=wl,
+                        )
+                        for i in range(nwavels)
+                    ]
+                )
                 return wavels * 1e-10, areas / areas.sum()
+
         else:
             # Preserve the PTT notebook's use of CAMINO's own throughput method.
             def local_throughput(filt, nwavels=1):
                 path = str(filter_path) if str(filt) == filter_name else filt
                 return original_unwrapped(path, nwavels=nwavels)
+
         cam.calc_throughput = local_throughput
         try:
             yield
@@ -506,12 +582,16 @@ def init_params(exposures, optics, defocus_nm):
         params_start["aberrations"][k["k_ab"]] = params_start["aberrations_shared"]
 
         if pup == "WLP8":
-            params_start["positions_wlp8"][k["k_pos"]] = jnp.array([0.0, 0.0], dtype=jnp.float64)
+            params_start["positions_wlp8"][k["k_pos"]] = jnp.array(
+                [0.0, 0.0], dtype=jnp.float64
+            )
             params_start["defocus_wlp8"][k["k_def"]] = jnp.asarray(
                 [defocus_nm[0]], dtype=jnp.float64
             )
         elif pup == "WLM8":
-            params_start["positions_wlm8"][k["k_pos"]] = jnp.array([0.0, 0.0], dtype=jnp.float64)
+            params_start["positions_wlm8"][k["k_pos"]] = jnp.array(
+                [0.0, 0.0], dtype=jnp.float64
+            )
             params_start["defocus_wlm8"][k["k_def"]] = jnp.asarray(
                 [defocus_nm[1]], dtype=jnp.float64
             )
@@ -589,17 +669,21 @@ def build_segment_labels(pupil_path: str, downsample_factor: int):
     out = np.zeros((h2 // factor, w2 // factor), dtype=np.int32)
     for i in range(out.shape[0]):
         for j in range(out.shape[1]):
-            block = labels[i*factor:(i+1)*factor, j*factor:(j+1)*factor].ravel()
+            block = labels[
+                i * factor : (i + 1) * factor, j * factor : (j + 1) * factor
+            ].ravel()
             block = block[block > 0]
             if block.size:
                 out[i, j] = np.bincount(block).argmax()
     return out
+
 
 def center_opd_on_pupil(opd, mask):
     mask_f = mask.astype(jnp.float64)
     mean = jnp.sum(opd * mask_f) / (jnp.sum(mask_f) + EPS)
     opd_centered = (opd - mean) * mask_f
     return jnp.where(mask, opd_centered, opd), mean
+
 
 def qv_masked_nm(x_nm, mask):
     mask = mask.astype(jnp.float64)
@@ -608,6 +692,7 @@ def qv_masked_nm(x_nm, mask):
     dy = x_nm[:, 1:] - x_nm[:, :-1]
     my = mask[:, 1:] * mask[:, :-1]
     return jnp.sum((dx * mx) ** 2) + jnp.sum((dy * my) ** 2)
+
 
 def quadratic_variation_masked(image, mask):
     image = jnp.asarray(image, dtype=jnp.float64)
@@ -620,6 +705,7 @@ def quadratic_variation_masked(image, mask):
     my = mask[:, 1:] * mask[:, :-1]
 
     return jnp.sum((dx * mx) ** 2) + jnp.sum((dy * my) ** 2)
+
 
 @partial(jax.jit, static_argnums=(2,))
 def segmentwise_qv(labeled_array, data, unique_labels):
@@ -638,6 +724,7 @@ def segmentwise_qv(labeled_array, data, unique_labels):
     vals = jax.vmap(one_segment)(seg_data, masks_f)
     return jnp.sum(vals)
 
+
 def good_bad_boundary_mix_nm(x_nm, good_mask, bad_mask):
     """Penalty that explicitly couples the Stage-3 full pixel map across
     good/bad boundaries. This discourages the merged full-mirror pixel map
@@ -655,8 +742,10 @@ def good_bad_boundary_mix_nm(x_nm, good_mask, bad_mask):
 
     return jnp.sum((dx * bx) ** 2) + jnp.sum((dy * by) ** 2)
 
+
 def piecewise_start_lr(lr, start_step):
     return lambda step: jnp.where(jnp.asarray(step) < start_step, 0.0, lr)
+
 
 def make_sgd_with_schedule(lr, start_step, momentum=0.6):
     return optax.chain(
@@ -664,13 +753,10 @@ def make_sgd_with_schedule(lr, start_step, momentum=0.6):
         optax.sgd(learning_rate=1.0, momentum=momentum, nesterov=True),
     )
 
+
 def grad_global_norm(grads):
     return jnp.sqrt(
-        sum(
-            jnp.sum(g * g)
-            for g in jax.tree_util.tree_leaves(grads)
-            if g is not None
-        )
+        sum(jnp.sum(g * g) for g in jax.tree_util.tree_leaves(grads) if g is not None)
     )
 
 
@@ -697,27 +783,46 @@ def build_physical_ptt_basis(segment_labels):
         if radius <= 0:
             raise ValueError(f"Degenerate physical segment mask: {group}")
         masks.append(mask)
-        basis.extend([mask.astype(float), np.where(mask, x / radius, 0.),
-                      np.where(mask, y / radius, 0.)])
+        basis.extend(
+            [
+                mask.astype(float),
+                np.where(mask, x / radius, 0.0),
+                np.where(mask, y / radius, 0.0),
+            ]
+        )
     return jnp.asarray(np.stack(masks)), jnp.asarray(np.stack(basis))
 
 
 def _image_products(exp, rendered):
     data, err = np.asarray(exp.data), np.asarray(exp.err)
     model = np.asarray(rendered["model"])
-    bad = np.asarray(exp.bad, dtype=bool) | ~np.isfinite(data) | ~np.isfinite(err) | (err <= 0)
+    bad = (
+        np.asarray(exp.bad, dtype=bool)
+        | ~np.isfinite(data)
+        | ~np.isfinite(err)
+        | (err <= 0)
+    )
     z = np.full_like(data, np.nan, dtype=float)
     np.divide(data - model, err, out=z, where=~bad)
     valid = ~bad & np.isfinite(z)
-    return dict(data=data, err=err, bad=bad, model=model, resid=data-model, z=z,
-                psf_unit=np.asarray(rendered["psf_unit"]),
-                flux=float(rendered["flux"]), background=float(rendered["background"]),
-                mean_z2=float(np.mean(z[valid] ** 2)) if valid.any() else np.nan)
+    return dict(
+        data=data,
+        err=err,
+        bad=bad,
+        model=model,
+        resid=data - model,
+        z=z,
+        psf_unit=np.asarray(rendered["psf_unit"]),
+        flux=float(rendered["flux"]),
+        background=float(rendered["background"]),
+        mean_z2=float(np.mean(z[valid] ** 2)) if valid.any() else np.nan,
+    )
 
 
 @dataclass
 class FitProblem:
     """Loaded data and immutable model inputs; no notebook globals are used."""
+
     config: FitConfig
     paths: dict
     exposures: dict
@@ -744,7 +849,9 @@ class FitProblem:
         return tuple(int(x) for x in np.unique(self.segment_labels) if x > 0)
 
     def filter_context(self):
-        return _local_filter(self.paths["filter"], self.config.filter_name, self.config.fit_mode)
+        return _local_filter(
+            self.paths["filter"], self.config.filter_name, self.config.fit_mode
+        )
 
     def ptt_map(self, coefficients):
         if self.ptt_basis is None:
@@ -752,15 +859,26 @@ class FitProblem:
         # Preserve the source notebook's per-segment sum order.
         opd = jnp.zeros_like(self.mirror_mask, dtype=jnp.float64)
         for i, mask in enumerate(self.ptt_masks):
-            opd = opd + (coefficients[3*i] + coefficients[3*i+1] * self.ptt_basis[3*i+1]
-                         + coefficients[3*i+2] * self.ptt_basis[3*i+2]) * mask
+            opd = (
+                opd
+                + (
+                    coefficients[3 * i]
+                    + coefficients[3 * i + 1] * self.ptt_basis[3 * i + 1]
+                    + coefficients[3 * i + 2] * self.ptt_basis[3 * i + 2]
+                )
+                * mask
+            )
         return opd
 
     def with_ptt(self, base, coefficients, pixel_nm=None):
         if pixel_nm is None:
             pixel_nm = jnp.zeros_like(self.mirror_mask, dtype=jnp.float64)
-        return {**base, "bad_plane_nm": coefficients, "full_pixel_opd_nm": pixel_nm,
-                "aberrations_shared": (self.ptt_map(coefficients) + pixel_nm) * 1e-9}
+        return {
+            **base,
+            "bad_plane_nm": coefficients,
+            "full_pixel_opd_nm": pixel_nm,
+            "aberrations_shared": (self.ptt_map(coefficients) + pixel_nm) * 1e-9,
+        }
 
     def render(self, params):
         """Render both images with the exact notebook flux/background solve.
@@ -778,20 +896,32 @@ class FitProblem:
             psf = dlu.resize(exp.fit(model, exp), self.config.fit_npix)
             img_fit = jnp.where(exp.bad, psf, exp.data)
             err_fit = jnp.where(exp.bad, 1e20, exp.err)
-            unit = psf / (jnp.sum(jnp.where(exp.bad, 0., psf)) + EPS)
-            flux, background = cam.solve_flux_bg_weighted_jax_nansafe(img_fit, err_fit, exp.bad, unit)
-            rendered[pup] = dict(psf_unit=unit, model=flux*unit+background,
-                                 flux=flux, background=background, img_fit=img_fit, err_fit=err_fit)
+            unit = psf / (jnp.sum(jnp.where(exp.bad, 0.0, psf)) + EPS)
+            flux, background = cam.solve_flux_bg_weighted_jax_nansafe(
+                img_fit, err_fit, exp.bad, unit
+            )
+            rendered[pup] = dict(
+                psf_unit=unit,
+                model=flux * unit + background,
+                flux=flux,
+                background=background,
+                img_fit=img_fit,
+                err_fit=err_fit,
+            )
         return rendered
 
     def data_loss(self, params):
         rendered = self.render(params)
-        total = 0.
+        total = 0.0
         for pup, exp in self.exposures.items():
             r = rendered[pup]
-            total = total + jnp.nansum(-jnp.where(
-                exp.bad, 0., jsp.stats.norm.logpdf(r["model"], r["img_fit"], r["err_fit"])
-            ))
+            total = total + jnp.nansum(
+                -jnp.where(
+                    exp.bad,
+                    0.0,
+                    jsp.stats.norm.logpdf(r["model"], r["img_fit"], r["err_fit"]),
+                )
+            )
         return total
 
     def regularisation(self, params):
@@ -801,38 +931,52 @@ class FitProblem:
             centred = opd * self.mirror_mask
             l1 = jnp.sum(jnp.abs(centred))
             qv = segmentwise_qv(self.segment_labels, centred * 1e9, self.unique_labels)
-            return dict(opd_l1=c.lambda_l1*l1, pixel_qv=c.lambda_qv*qv)
+            return dict(opd_l1=c.lambda_l1 * l1, pixel_qv=c.lambda_qv * qv)
         pixel = params["full_pixel_opd_nm"] * self.mirror_mask
         qv = qv_masked_nm(pixel, self.mirror_mask)
-        l2 = jnp.mean(pixel ** 2)  # Mean over the full square, as in the notebook.
+        l2 = jnp.mean(pixel**2)  # Mean over the full square, as in the notebook.
         ax, ay, _ = self.plane_pinv @ pixel[self.mirror_mask]
         # Retain original uncentred coordinate convention for this penalty.
-        slope = ax*self.plane_A[:, 0] + ay*self.plane_A[:, 1]
+        slope = ax * self.plane_A[:, 0] + ay * self.plane_A[:, 1]
         bad = jnp.any(self.ptt_masks, axis=0)
         mix = good_bad_boundary_mix_nm(pixel, self.mirror_mask & ~bad, bad)
-        return dict(pixel_qv=c.lambda_qv*qv, pixel_l2=c.lambda_pixel_l2*l2,
-                    global_plane=c.lambda_global_plane*jnp.mean(slope ** 2),
-                    boundary_mix=c.lambda_boundary_mix*mix)
+        return dict(
+            pixel_qv=c.lambda_qv * qv,
+            pixel_l2=c.lambda_pixel_l2 * l2,
+            global_plane=c.lambda_global_plane * jnp.mean(slope**2),
+            boundary_mix=c.lambda_boundary_mix * mix,
+        )
 
     def loss(self, params, regularise=True):
         total = self.data_loss(params)
-        return total + sum(self.regularisation(params).values()) if regularise else total
+        return (
+            total + sum(self.regularisation(params).values()) if regularise else total
+        )
 
     def display_mask(self):
         from scipy.ndimage import binary_erosion
-        display = np.asarray(self.model.optics.layers["pupil"].transmission) > self.config.display_transmission_threshold
+
+        display = (
+            np.asarray(self.model.optics.layers["pupil"].transmission)
+            > self.config.display_transmission_threshold
+        )
         if self.config.display_segment_outlines:
             labels = np.asarray(self.segment_labels)
             # Only use the physical mapping on its native-label geometry.
-            groups = PHYSICAL_TO_LABELS.values() if self.config.fit_mode == "ptt_pixel" else ((x,) for x in self.unique_labels)
+            groups = (
+                PHYSICAL_TO_LABELS.values()
+                if self.config.fit_mode == "ptt_pixel"
+                else ((x,) for x in self.unique_labels)
+            )
             for group in groups:
                 mask = np.isin(labels, group)
                 display &= ~(mask & ~binary_erosion(mask))
         return display
 
 
-def load_data(wlp8_path, wlm8_path, *, pupil_path, filter_path,
-              fit_mode=None, config=None):
+def load_data(
+    wlp8_path, wlm8_path, *, pupil_path, filter_path, fit_mode=None, config=None
+):
     """Load one WLP8/WLM8 pair and initialise a ZERO OPD in both modes.
 
     The pupil FITS and two-column Angstrom/transmission filter table are
@@ -840,68 +984,103 @@ def load_data(wlp8_path, wlm8_path, *, pupil_path, filter_path,
     occurs. Returned FitProblem can be passed to fit_data(data=...).
     """
     c = _resolve_config(fit_mode, config)
-    paths = {k: str(Path(v).expanduser().resolve()) for k, v in
-             dict(wlp8=wlp8_path, wlm8=wlm8_path, pupil=pupil_path, filter=filter_path).items()}
+    paths = {
+        k: str(Path(v).expanduser().resolve())
+        for k, v in dict(
+            wlp8=wlp8_path, wlm8=wlm8_path, pupil=pupil_path, filter=filter_path
+        ).items()
+    }
     missing = [p for p in paths.values() if not Path(p).is_file()]
     if missing:
         raise FileNotFoundError("Missing input files: " + ", ".join(missing))
     jax.config.update("jax_enable_x64", True)
     with _local_filter(paths["filter"], c.filter_name, c.fit_mode):
         # FITS arrays are often big-endian; JAX requires native-endian dtypes.
-        primary = jnp.asarray(np.asarray(fits.getdata(paths["pupil"]), dtype=np.float64))
+        primary = jnp.asarray(
+            np.asarray(fits.getdata(paths["pupil"]), dtype=np.float64)
+        )
         if primary.ndim != 2 or primary.shape[0] != primary.shape[1]:
             raise ValueError("Pupil FITS must be a square 2-D array")
         if primary.shape[0] % c.pupil_downsample_factor:
-            raise ValueError("Pupil size must divide exactly by pupil_downsample_factor")
-        transmission = dlu.downsample((primary >= 256.).astype(jnp.int32), c.pupil_downsample_factor)
+            raise ValueError(
+                "Pupil size must divide exactly by pupil_downsample_factor"
+            )
+        transmission = dlu.downsample(
+            (primary >= 256.0).astype(jnp.int32), c.pupil_downsample_factor
+        )
         optics = NIRCamFresnelOptics(
-            transmission, defocus=3000., wf_npixels=transmission.shape[0],
-            psf_npixels=c.psf_npixels, oversample=c.oversample, pixel_scale=c.pixel_scale,
-            pixel_pitch=c.pixel_pitch, diameter=c.diameter, opd_phase_sign=c.opd_phase_sign,
+            transmission,
+            defocus=3000.0,
+            wf_npixels=transmission.shape[0],
+            psf_npixels=c.psf_npixels,
+            oversample=c.oversample,
+            pixel_scale=c.pixel_scale,
+            pixel_pitch=c.pixel_pitch,
+            diameter=c.diameter,
+            opd_phase_sign=c.opd_phase_sign,
             orientation=c.orientation,
         )
         detector = NRCDetectorLong(npixels_in=c.fit_npix, oversample=c.oversample)
         fit_poly = cam.SinglePointFilterFit(nwavels=c.n_wavels)
-        exposures = {pup: cam.exposure_from_defocus_file(paths[pup.lower()], fit_poly, crop=c.fit_npix)
-                     for pup in ("WLP8", "WLM8")}
+        exposures = {
+            pup: cam.exposure_from_defocus_file(
+                paths[pup.lower()], fit_poly, crop=c.fit_npix
+            )
+            for pup in ("WLP8", "WLM8")
+        }
         for pup, exp in exposures.items():
             expected = (c.fit_npix, c.fit_npix)
             if any(tuple(x.shape) != expected for x in (exp.data, exp.err, exp.bad)):
                 raise ValueError(f"{pup}: exposure crop does not match {expected}")
             if exp.filter != c.filter_name:
-                raise ValueError(f"{pup}: filter {exp.filter!r} differs from {c.filter_name!r}")
+                raise ValueError(
+                    f"{pup}: filter {exp.filter!r} differs from {c.filter_name!r}"
+                )
         params, _ = init_params(exposures, optics, c.defocus_nm)
         patch_modelparams_contains()
         template = cam.ModelParams(params)
-        model = NIRCamModel(list(exposures.values()), params, optics, detector,
-                           {c.filter_name: cam.get_filter_test(paths["filter"])})
+        model = NIRCamModel(
+            list(exposures.values()),
+            params,
+            optics,
+            detector,
+            {c.filter_name: cam.get_filter_test(paths["filter"])},
+        )
         mask = model.optics.layers["pupil"].transmission > 0
         if not np.any(np.asarray(mask)):
             raise ValueError("Empty illuminated pupil")
         if c.fit_mode == "ptt_pixel":
             labels = build_segment_labels(paths["pupil"], c.pupil_downsample_factor)
         else:
-            labels = measure.label(np.asarray(transmission).astype(bool), connectivity=2)
+            labels = measure.label(
+                np.asarray(transmission).astype(bool), connectivity=2
+            )
         if labels.shape != mask.shape:
             raise ValueError("Segment mask and optical pupil have different shapes")
-        initial = dict(positions_wlp8_xy=jnp.zeros(2, dtype=jnp.float64),
-                       positions_wlm8_xy=jnp.zeros(2, dtype=jnp.float64),
-                       defocus_wlp8_val=jnp.asarray([c.defocus_nm[0]], dtype=jnp.float64),
-                       defocus_wlm8_val=jnp.asarray([c.defocus_nm[1]], dtype=jnp.float64),
-                       aberrations_shared=jnp.zeros_like(mask, dtype=jnp.float64),
-                       pupil_delta=jnp.zeros_like(mask, dtype=jnp.float64))
-        problem = FitProblem(c, paths, exposures, model, template, initial,
-                             jnp.asarray(labels), mask)
+        initial = dict(
+            positions_wlp8_xy=jnp.zeros(2, dtype=jnp.float64),
+            positions_wlm8_xy=jnp.zeros(2, dtype=jnp.float64),
+            defocus_wlp8_val=jnp.asarray([c.defocus_nm[0]], dtype=jnp.float64),
+            defocus_wlm8_val=jnp.asarray([c.defocus_nm[1]], dtype=jnp.float64),
+            aberrations_shared=jnp.zeros_like(mask, dtype=jnp.float64),
+            pupil_delta=jnp.zeros_like(mask, dtype=jnp.float64),
+        )
+        problem = FitProblem(
+            c, paths, exposures, model, template, initial, jnp.asarray(labels), mask
+        )
         if c.fit_mode == "ptt_pixel":
             problem.ptt_masks, problem.ptt_basis = build_physical_ptt_basis(labels)
             yy, xx = jnp.indices(labels.shape)
-            problem.plane_A = jnp.stack([xx[mask], yy[mask], jnp.ones(int(mask.sum()))], axis=1).astype(jnp.float64)
+            problem.plane_A = jnp.stack(
+                [xx[mask], yy[mask], jnp.ones(int(mask.sum()))], axis=1
+            ).astype(jnp.float64)
             problem.plane_pinv = jnp.linalg.pinv(problem.plane_A)
         return problem
 
 
 class _ScipyObjective:
     """Cache the last evaluation so accepted-iterate callbacks are accurate."""
+
     def __init__(self, value_and_grad, history):
         self.value_and_grad = value_and_grad
         self.history = history
@@ -913,21 +1092,40 @@ class _ScipyObjective:
         x = np.asarray(x, dtype=np.float64)
         if self.x is None or not np.array_equal(x, self.x):
             value, grad = self.value_and_grad(jnp.asarray(x, dtype=jnp.float64))
-            self.x, self.value, self.grad = x.copy(), float(value), np.asarray(grad, dtype=np.float64)
+            self.x, self.value, self.grad = (
+                x.copy(),
+                float(value),
+                np.asarray(grad, dtype=np.float64),
+            )
             if not np.isfinite(self.value) or not np.all(np.isfinite(self.grad)):
-                raise FloatingPointError(f"Non-finite loss/gradient in {self.history.name}")
+                raise FloatingPointError(
+                    f"Non-finite loss/gradient in {self.history.name}"
+                )
             self.history.eval_losses.append(self.value)
         return self.value, self.grad.copy()
 
 
-def _run_optimizer(value_and_grad, x0, *, name, method, options, config,
-                   histories, bounds=None, record=None):
+def _run_optimizer(
+    value_and_grad,
+    x0,
+    *,
+    name,
+    method,
+    options,
+    config,
+    histories,
+    bounds=None,
+    record=None,
+):
     history = StageHistory(name, method)
     histories.append(history)
     fun = _ScipyObjective(value_and_grad, history)
     start = time.perf_counter()
     history.initial_loss, _ = fun(x0)
-    with tqdm(total=options["maxiter"], desc=name, unit="iter", disable=not config.progress) as bar:
+    with tqdm(
+        total=options["maxiter"], desc=name, unit="iter", disable=not config.progress
+    ) as bar:
+
         def callback(x):
             value, grad = fun(x)
             history.losses.append(value)
@@ -937,8 +1135,16 @@ def _run_optimizer(value_and_grad, x0, *, name, method, options, config,
                 record(history, np.asarray(x))
             bar.update(1)
             bar.set_postfix(loss=f"{value:.6e}", grad=f"{np.linalg.norm(grad):.3e}")
-        result = spo.minimize(fun, np.asarray(x0, dtype=np.float64), jac=True,
-                              method=method, bounds=bounds, callback=callback, options=options)
+
+        result = spo.minimize(
+            fun,
+            np.asarray(x0, dtype=np.float64),
+            jac=True,
+            method=method,
+            bounds=bounds,
+            callback=callback,
+            options=options,
+        )
     history.result = result
     history.elapsed_seconds = time.perf_counter() - start
     print(f"{name}: {result.message}; iterations={result.nit}, loss={result.fun:.8e}")
@@ -958,11 +1164,13 @@ def _checkpoint(problem, params, histories, output_dir, name):
     root = Path(output_dir).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     payload = {key: np.asarray(value) for key, value in params.items()}
-    payload.update(physical_ids=np.asarray(problem.physical_ids, dtype=int),
-                   fit_mode=np.asarray(problem.config.fit_mode),
-                   config_json=np.asarray(json.dumps(asdict(problem.config))),
-                   paths_json=np.asarray(json.dumps(problem.paths)),
-                   mirror_mask=np.asarray(problem.mirror_mask))
+    payload.update(
+        physical_ids=np.asarray(problem.physical_ids, dtype=int),
+        fit_mode=np.asarray(problem.config.fit_mode),
+        config_json=np.asarray(json.dumps(asdict(problem.config))),
+        paths_json=np.asarray(json.dumps(problem.paths)),
+        mirror_mask=np.asarray(problem.mirror_mask),
+    )
     np.savez_compressed(root / f"{name}_checkpoint.npz", **payload)
     _save_histories(histories, root / "stage_histories.npz")
 
@@ -972,14 +1180,29 @@ def _save_histories(histories, path):
     summaries = []
     for i, h in enumerate(histories):
         prefix = f"stage_{i:02d}"
-        for field_name in ("losses", "grad_norms", "max_abs_grads", "parameter_history",
-                           "pixel_rms_nm", "eval_losses"):
+        for field_name in (
+            "losses",
+            "grad_norms",
+            "max_abs_grads",
+            "parameter_history",
+            "pixel_rms_nm",
+            "eval_losses",
+        ):
             arrays[f"{prefix}_{field_name}"] = np.asarray(getattr(h, field_name))
-        summary = dict(name=h.name, method=h.method, initial_loss=h.initial_loss,
-                       elapsed_seconds=h.elapsed_seconds)
+        summary = dict(
+            name=h.name,
+            method=h.method,
+            initial_loss=h.initial_loss,
+            elapsed_seconds=h.elapsed_seconds,
+        )
         if h.result is not None:
-            summary.update(success=bool(h.result.success), message=str(h.result.message),
-                           nit=int(h.result.nit), nfev=int(h.result.nfev), fun=float(h.result.fun))
+            summary.update(
+                success=bool(h.result.success),
+                message=str(h.result.message),
+                nit=int(h.result.nit),
+                nfev=int(h.result.nfev),
+                fun=float(h.result.fun),
+            )
         summaries.append(summary)
     arrays["summary_json"] = np.asarray(json.dumps(summaries))
     np.savez_compressed(path, **arrays)
@@ -990,12 +1213,19 @@ def _run_pixel_initial_stage(problem, histories):
     params = dict(problem.initial_params)
     if c.stage1_sgd_steps == 0:
         return params
-    labels = dict(positions_wlp8_xy="pos_wlp8", positions_wlm8_xy="pos_wlm8",
-                  defocus_wlp8_val="def_wlp8", defocus_wlm8_val="def_wlm8",
-                  aberrations_shared="freeze", pupil_delta="freeze")
+    labels = dict(
+        positions_wlp8_xy="pos_wlp8",
+        positions_wlm8_xy="pos_wlm8",
+        defocus_wlp8_val="def_wlp8",
+        defocus_wlm8_val="def_wlm8",
+        aberrations_shared="freeze",
+        pupil_delta="freeze",
+    )
     names = ("def_wlp8", "pos_wlp8", "def_wlm8", "pos_wlm8")
-    transforms = {name: make_sgd_with_schedule(lr, step, c.sgd_momentum)
-                  for name, lr, step in zip(names, c.sgd_learning_rates, c.sgd_start_steps)}
+    transforms = {
+        name: make_sgd_with_schedule(lr, step, c.sgd_momentum)
+        for name, lr, step in zip(names, c.sgd_learning_rates, c.sgd_start_steps)
+    }
     transforms["freeze"] = optax.set_to_zero()
     optimizer = optax.multi_transform(transforms, labels)
     state = optimizer.init(params)
@@ -1012,10 +1242,19 @@ def _run_pixel_initial_stage(problem, histories):
             h.losses.append(float(value))
             h.grad_norms.append(float(grad_global_norm(grads)))
             # These histories correspond to the pre-update loss, as in the source.
-            h.parameter_history.append(np.concatenate([
-                np.asarray(params[k]).ravel() for k in
-                ("positions_wlp8_xy", "positions_wlm8_xy", "defocus_wlp8_val", "defocus_wlm8_val")
-            ]))
+            h.parameter_history.append(
+                np.concatenate(
+                    [
+                        np.asarray(params[k]).ravel()
+                        for k in (
+                            "positions_wlp8_xy",
+                            "positions_wlm8_xy",
+                            "defocus_wlp8_val",
+                            "defocus_wlm8_val",
+                        )
+                    ]
+                )
+            )
             params = optax.apply_updates(params, updates)
             bar.update(1)
             bar.set_postfix(loss=f"{float(value):.6e}")
@@ -1029,71 +1268,125 @@ def _run_positions(problem, params, histories, maxiter, name):
     if maxiter == 0:
         return params
     c = problem.config
-    x0 = np.concatenate([np.asarray(params["positions_wlp8_xy"]),
-                         np.asarray(params["positions_wlm8_xy"])]) / c.position_scale
+    x0 = (
+        np.concatenate(
+            [
+                np.asarray(params["positions_wlp8_xy"]),
+                np.asarray(params["positions_wlm8_xy"]),
+            ]
+        )
+        / c.position_scale
+    )
+
     def unpack(x):
-        return {**params, "positions_wlp8_xy": x[:2]*c.position_scale,
-                "positions_wlm8_xy": x[2:]*c.position_scale}
+        return {
+            **params,
+            "positions_wlp8_xy": x[:2] * c.position_scale,
+            "positions_wlm8_xy": x[2:] * c.position_scale,
+        }
+
     evaluate = jax.jit(jax.value_and_grad(lambda x: problem.data_loss(unpack(x))))
-    result = _run_optimizer(evaluate, x0, name=name, method="BFGS",
-                            options=dict(maxiter=maxiter, gtol=c.ptt_gtol),
-                            config=c, histories=histories, record=_record_small)
+    result = _run_optimizer(
+        evaluate,
+        x0,
+        name=name,
+        method="BFGS",
+        options=dict(maxiter=maxiter, gtol=c.ptt_gtol),
+        config=c,
+        histories=histories,
+        record=_record_small,
+    )
     return unpack(jnp.asarray(result.x))
 
 
 def _run_ptt_initial_stages(problem, histories, output_dir):
     c = problem.config
-    params = problem.with_ptt(problem.initial_params, jnp.zeros(problem.n_ptt, dtype=jnp.float64))
-    params = _run_positions(problem, params, histories, c.position_maxiter, "Stage 0 — BFGS positions")
+    params = problem.with_ptt(
+        problem.initial_params, jnp.zeros(problem.n_ptt, dtype=jnp.float64)
+    )
+    params = _run_positions(
+        problem, params, histories, c.position_maxiter, "Stage 0 — BFGS positions"
+    )
     _checkpoint(problem, params, histories, output_dir, "stage0")
     base = dict(params)
     coefficients = np.zeros(problem.n_ptt, dtype=np.float64)
+
     def loss_ptt(x):
         return problem.data_loss(problem.with_ptt(base, x))
+
     seed_loss = jax.jit(loss_ptt)
     if not c.skip_grid_init:
-        seeds = list(product(*(np.unique([lo, 0., hi]) for lo, hi in c.ptt_bounds_nm)))
+        seeds = list(product(*(np.unique([lo, 0.0, hi]) for lo, hi in c.ptt_bounds_nm)))
         for i, physical_id in enumerate(problem.physical_ids):
-            start = 3*i
+            start = 3 * i
             best_loss = np.inf
-            best_seed = coefficients[start:start+3].copy()
-            with tqdm(seeds, desc=f"PTT seeds — physical {physical_id}", disable=not c.progress) as bar:
+            best_seed = coefficients[start : start + 3].copy()
+            with tqdm(
+                seeds,
+                desc=f"PTT seeds — physical {physical_id}",
+                disable=not c.progress,
+            ) as bar:
                 for seed in bar:
                     trial = coefficients.copy()
-                    trial[start:start+3] = seed
+                    trial[start : start + 3] = seed
                     value = float(seed_loss(jnp.asarray(trial)))
                     if value < best_loss:
                         best_loss, best_seed = value, np.asarray(seed).copy()
                     bar.set_postfix(best=f"{best_loss:.6e}")
             if not np.isfinite(best_loss):
-                raise FloatingPointError(f"No finite PTT seed for physical segment {physical_id}")
+                raise FloatingPointError(
+                    f"No finite PTT seed for physical segment {physical_id}"
+                )
             fixed = jnp.asarray(coefficients)
+
             def local_loss(q):
-                return loss_ptt(fixed.at[start:start+3].set(q))
+                return loss_ptt(fixed.at[start : start + 3].set(q))
+
             if c.local_ptt_maxiter:
                 local = _run_optimizer(
-                    jax.jit(jax.value_and_grad(local_loss)), best_seed,
-                    name=f"Stage 1a — local PTT physical {physical_id}", method="L-BFGS-B",
-                    options=dict(maxiter=c.local_ptt_maxiter, gtol=c.ptt_gtol, maxcor=10),
-                    bounds=c.ptt_bounds_nm, config=c, histories=histories, record=_record_small,
+                    jax.jit(jax.value_and_grad(local_loss)),
+                    best_seed,
+                    name=f"Stage 1a — local PTT physical {physical_id}",
+                    method="L-BFGS-B",
+                    options=dict(
+                        maxiter=c.local_ptt_maxiter, gtol=c.ptt_gtol, maxcor=10
+                    ),
+                    bounds=c.ptt_bounds_nm,
+                    config=c,
+                    histories=histories,
+                    record=_record_small,
                 )
-                coefficients[start:start+3] = local.x
+                coefficients[start : start + 3] = local.x
             else:
-                coefficients[start:start+3] = best_seed
-            _checkpoint(problem, problem.with_ptt(base, jnp.asarray(coefficients)), histories,
-                        output_dir, f"stage1a_physical_{physical_id:02d}")
+                coefficients[start : start + 3] = best_seed
+            _checkpoint(
+                problem,
+                problem.with_ptt(base, jnp.asarray(coefficients)),
+                histories,
+                output_dir,
+                f"stage1a_physical_{physical_id:02d}",
+            )
     if c.joint_ptt_maxiter:
         joint = _run_optimizer(
-            jax.jit(jax.value_and_grad(loss_ptt)), coefficients,
-            name="Stage 1 — joint PTT BFGS", method="BFGS",
+            jax.jit(jax.value_and_grad(loss_ptt)),
+            coefficients,
+            name="Stage 1 — joint PTT BFGS",
+            method="BFGS",
             options=dict(maxiter=c.joint_ptt_maxiter, gtol=c.ptt_gtol),
-            config=c, histories=histories, record=_record_small,
+            config=c,
+            histories=histories,
+            record=_record_small,
         )
         coefficients = joint.x
     params = problem.with_ptt(base, jnp.asarray(coefficients))
     _checkpoint(problem, params, histories, output_dir, "stage1")
-    params = _run_positions(problem, params, histories, c.position_refit_maxiter,
-                            "Stage 1b — BFGS position refit")
+    params = _run_positions(
+        problem,
+        params,
+        histories,
+        c.position_refit_maxiter,
+        "Stage 1b — BFGS position refit",
+    )
     _checkpoint(problem, params, histories, output_dir, "stage1b")
     return params
 
@@ -1105,14 +1398,20 @@ def _make_final_objective(problem, base_params):
     base = dict(base_params)
     if problem.config.fit_mode == "pixel":
         x0 = np.asarray(base["aberrations_shared"])[np.asarray(mask)] * 1e9
+
         def unpack(x):
             pixel = jnp.zeros_like(mask, dtype=jnp.float64).at[mask].set(x)
-            return {**base, "aberrations_shared": pixel*1e-9}
+            return {**base, "aberrations_shared": pixel * 1e-9}
+
     else:
         x0 = np.concatenate([np.asarray(base["bad_plane_nm"]), np.zeros(n_pixels)])
+
         def unpack(x):
-            pixel = jnp.zeros_like(mask, dtype=jnp.float64).at[mask].set(x[problem.n_ptt:])
-            return problem.with_ptt(base, x[:problem.n_ptt], pixel)
+            pixel = (
+                jnp.zeros_like(mask, dtype=jnp.float64).at[mask].set(x[problem.n_ptt :])
+            )
+            return problem.with_ptt(base, x[: problem.n_ptt], pixel)
+
     evaluate = jax.jit(jax.value_and_grad(lambda x: problem.loss(unpack(x))))
     return x0, unpack, evaluate
 
@@ -1126,6 +1425,7 @@ class FitResult:
     renderer convention. Explicit PTT is in nm. No saved OPD is flipped to
     match the other mode's convention automatically.
     """
+
     problem: FitProblem = field(repr=False)
     params: dict
     scipy_result: Any
@@ -1167,9 +1467,13 @@ class FitResult:
         self.params = self._unpack(jnp.asarray(self.scipy_result.x, dtype=jnp.float64))
         with self.problem.filter_context():
             rendered = self.problem.render(self.params)
-            self.products = {pup: _image_products(exp, rendered[pup])
-                             for pup, exp in self.problem.exposures.items()}
-            self.objective_terms = {k: float(v) for k, v in self.problem.regularisation(self.params).items()}
+            self.products = {
+                pup: _image_products(exp, rendered[pup])
+                for pup, exp in self.problem.exposures.items()
+            }
+            self.objective_terms = {
+                k: float(v) for k, v in self.problem.regularisation(self.params).items()
+            }
             self.objective_terms["data"] = float(self.problem.data_loss(self.params))
             self.objective_terms["total"] = sum(self.objective_terms.values())
         return self
@@ -1179,8 +1483,11 @@ class FitResult:
 
     def plot_loss(self, last=None):
         import matplotlib.pyplot as plt
+
         stages = [h for h in self.histories if h.name.startswith("Stage 2")]
-        values = np.asarray([stages[0].initial_loss] + [v for h in stages for v in h.losses])
+        values = np.asarray(
+            [stages[0].initial_loss] + [v for h in stages for v in h.losses]
+        )
         x = np.arange(values.size)
         if last is not None:
             if not isinstance(last, int) or last <= 0:
@@ -1196,19 +1503,37 @@ class FitResult:
 
     def plot_opd(self, limit_nm=None):
         import matplotlib.pyplot as plt
+
         mask = self.problem.display_mask()
         maps = [("Total OPD", self.opd_nm)]
         if self.config.fit_mode == "ptt_pixel":
-            maps += [("Physical-segment PTT", self.ptt_opd_nm), ("Pixel residual", self.pixel_opd_nm)]
+            maps += [
+                ("Physical-segment PTT", self.ptt_opd_nm),
+                ("Pixel residual", self.pixel_opd_nm),
+            ]
         cmap = plt.cm.RdBu_r.copy()
         cmap.set_bad("black")
         if limit_nm is None:
-            limit_nm = max(float(np.percentile(np.abs(self.opd_nm[mask]), 99.5)), 1e-9) if np.any(mask) else 1.0
-        fig, axes = plt.subplots(1, len(maps), figsize=(5*len(maps), 4), squeeze=False,
-                                 layout="constrained")
+            limit_nm = (
+                max(float(np.percentile(np.abs(self.opd_nm[mask]), 99.5)), 1e-9)
+                if np.any(mask)
+                else 1.0
+            )
+        fig, axes = plt.subplots(
+            1,
+            len(maps),
+            figsize=(5 * len(maps), 4),
+            squeeze=False,
+            layout="constrained",
+        )
         for ax, (title, array) in zip(axes[0], maps):
-            im = ax.imshow(np.where(mask, array, np.nan), origin="lower", cmap=cmap,
-                           vmin=-limit_nm, vmax=limit_nm)
+            im = ax.imshow(
+                np.where(mask, array, np.nan),
+                origin="lower",
+                cmap=cmap,
+                vmin=-limit_nm,
+                vmax=limit_nm,
+            )
             ax.set_title(title)
             ax.set_axis_off()
         fig.colorbar(im, ax=list(axes[0]), label="OPD (nm)")
@@ -1224,56 +1549,96 @@ class FitResult:
         Repeated saves replace these output files, including after continuation.
         restart_state.npz records the numerical state (not L-BFGS memory).
         """
-        root = Path(output_dir).expanduser() if output_dir is not None else self.output_dir
+        root = (
+            Path(output_dir).expanduser() if output_dir is not None else self.output_dir
+        )
         if root is None:
             raise ValueError("Supply output_dir to save the result")
         root.mkdir(parents=True, exist_ok=True)
         self.output_dir = root
-        np.savez_compressed(root / "final_params.npz", **{k: np.asarray(v) for k, v in self.params.items()})
+        np.savez_compressed(
+            root / "final_params.npz",
+            **{k: np.asarray(v) for k, v in self.params.items()},
+        )
         _save_histories(self.histories, root / "stage_histories.npz")
-        np.savez_compressed(root / "restart_state.npz", x=np.asarray(self.scipy_result.x),
-                            fun=np.asarray(self.scipy_result.fun), jac=np.asarray(self.scipy_result.jac),
-                            **{k: np.asarray(v) for k, v in self.params.items()},
-                            mirror_mask=np.asarray(self.problem.mirror_mask),
-                            physical_ids=np.asarray(self.problem.physical_ids, dtype=int),
-                            segment_labels=np.asarray(self.problem.segment_labels),
-                            config_json=np.asarray(json.dumps(asdict(self.config))),
-                            paths_json=np.asarray(json.dumps(self.problem.paths)))
-        np.savez_compressed(root / "metrics.npz", **self.objective_terms,
-                            final_grad_norm=np.linalg.norm(self.scipy_result.jac),
-                            final_max_abs_grad=np.max(np.abs(self.scipy_result.jac)))
+        np.savez_compressed(
+            root / "restart_state.npz",
+            x=np.asarray(self.scipy_result.x),
+            fun=np.asarray(self.scipy_result.fun),
+            jac=np.asarray(self.scipy_result.jac),
+            **{k: np.asarray(v) for k, v in self.params.items()},
+            mirror_mask=np.asarray(self.problem.mirror_mask),
+            physical_ids=np.asarray(self.problem.physical_ids, dtype=int),
+            segment_labels=np.asarray(self.problem.segment_labels),
+            config_json=np.asarray(json.dumps(asdict(self.config))),
+            paths_json=np.asarray(json.dumps(self.problem.paths)),
+        )
+        np.savez_compressed(
+            root / "metrics.npz",
+            **self.objective_terms,
+            final_grad_norm=np.linalg.norm(self.scipy_result.jac),
+            final_max_abs_grad=np.max(np.abs(self.scipy_result.jac)),
+        )
         header = fits.Header()
         header["BUNIT"] = "nm"
         header["FITMODE"] = self.config.fit_mode
-        for name, array in (("final_opd_nm", self.opd_nm), ("final_opd_centred_nm", self.centred_opd_nm),
-                            ("ptt_opd_nm", self.ptt_opd_nm), ("pixel_opd_nm", self.pixel_opd_nm)):
+        for name, array in (
+            ("final_opd_nm", self.opd_nm),
+            ("final_opd_centred_nm", self.centred_opd_nm),
+            ("ptt_opd_nm", self.ptt_opd_nm),
+            ("pixel_opd_nm", self.pixel_opd_nm),
+        ):
             fits.writeto(root / f"{name}.fits", array, header=header, overwrite=True)
         for pup, products in self.products.items():
             for key in ("data", "model", "resid", "z", "psf_unit", "err", "bad"):
                 name = {"resid": "residual", "z": "zscore"}.get(key, key)
-                array = products[key].astype(np.uint8) if key == "bad" else products[key]
+                array = (
+                    products[key].astype(np.uint8) if key == "bad" else products[key]
+                )
                 fits.writeto(root / f"{name}_{pup.lower()}.fits", array, overwrite=True)
-        config = dict(config=asdict(self.config), inputs=self.problem.paths,
-                      physical_ids=self.problem.physical_ids, runtime_seconds=self.runtime_seconds,
-                      backend=jax.default_backend(), objective_terms=self.objective_terms,
-                      optimizer=dict(success=bool(self.scipy_result.success), message=str(self.scipy_result.message),
-                                     nit=int(self.scipy_result.nit), nfev=int(self.scipy_result.nfev)),
-                      total_stage2_iterations=sum(h.result.nit for h in self.histories
-                                                  if h.name.startswith("Stage 2") and h.result is not None))
+        config = dict(
+            config=asdict(self.config),
+            inputs=self.problem.paths,
+            physical_ids=self.problem.physical_ids,
+            runtime_seconds=self.runtime_seconds,
+            backend=jax.default_backend(),
+            objective_terms=self.objective_terms,
+            optimizer=dict(
+                success=bool(self.scipy_result.success),
+                message=str(self.scipy_result.message),
+                nit=int(self.scipy_result.nit),
+                nfev=int(self.scipy_result.nfev),
+            ),
+            total_stage2_iterations=sum(
+                h.result.nit
+                for h in self.histories
+                if h.name.startswith("Stage 2") and h.result is not None
+            ),
+        )
         (root / "run_config.json").write_text(json.dumps(config, indent=2))
         return root
 
 
 def _record_final(problem):
     def record(h, x):
-        h.pixel_rms_nm.append(float(np.std(x[problem.n_ptt:])))
+        h.pixel_rms_nm.append(float(np.std(x[problem.n_ptt :])))
         if problem.n_ptt:
-            h.parameter_history.append(x[:problem.n_ptt].copy())
+            h.parameter_history.append(x[: problem.n_ptt].copy())
+
     return record
 
 
-def fit_data(wlp8_path=None, wlm8_path=None, *, pupil_path=None, filter_path=None,
-             fit_mode=None, config=None, data=None, output_dir=None):
+def fit_data(
+    wlp8_path=None,
+    wlm8_path=None,
+    *,
+    pupil_path=None,
+    filter_path=None,
+    fit_mode=None,
+    config=None,
+    data=None,
+    output_dir=None,
+):
     """Fit a pair from zero using 'pixel' (default) or 'ptt_pixel'.
 
     Supply the four paths OR a FitProblem returned by load_data. A preset
@@ -1292,9 +1657,17 @@ def fit_data(wlp8_path=None, wlm8_path=None, *, pupil_path=None, filter_path=Non
         problem = data
     else:
         if any(p is None for p in (wlp8_path, wlm8_path, pupil_path, filter_path)):
-            raise ValueError("Supply WLP8, WLM8, pupil and filter paths, or data=load_data(...)")
-        problem = load_data(wlp8_path, wlm8_path, pupil_path=pupil_path, filter_path=filter_path,
-                             fit_mode=fit_mode, config=config)
+            raise ValueError(
+                "Supply WLP8, WLM8, pupil and filter paths, or data=load_data(...)"
+            )
+        problem = load_data(
+            wlp8_path,
+            wlm8_path,
+            pupil_path=pupil_path,
+            filter_path=filter_path,
+            fit_mode=fit_mode,
+            config=config,
+        )
     c = problem.config
     root = Path(output_dir).expanduser() if output_dir is not None else None
     histories = []
@@ -1307,11 +1680,26 @@ def fit_data(wlp8_path=None, wlm8_path=None, *, pupil_path=None, filter_path=Non
         else:
             params = _run_ptt_initial_stages(problem, histories, root)
         x0, unpack, evaluate = _make_final_objective(problem, params)
-        optimizer = _run_optimizer(evaluate, x0, name="Stage 2 — L-BFGS-B",
-                                   method="L-BFGS-B", options=c.stage2_options(), config=c,
-                                   histories=histories, record=_record_final(problem))
-    result = FitResult(problem, unpack(jnp.asarray(optimizer.x)), optimizer, histories, root,
-                       time.perf_counter()-started, unpack, evaluate)
+        optimizer = _run_optimizer(
+            evaluate,
+            x0,
+            name="Stage 2 — L-BFGS-B",
+            method="L-BFGS-B",
+            options=c.stage2_options(),
+            config=c,
+            histories=histories,
+            record=_record_final(problem),
+        )
+    result = FitResult(
+        problem,
+        unpack(jnp.asarray(optimizer.x)),
+        optimizer,
+        histories,
+        root,
+        time.perf_counter() - started,
+        unpack,
+        evaluate,
+    )
     result.refresh()
     if root is not None:
         result.save()
@@ -1329,13 +1717,17 @@ def continue_fit(result, maxiter=2000):
     started = time.perf_counter()
     with result.problem.filter_context():
         optimizer = _run_optimizer(
-            result._value_and_grad, np.asarray(result.scipy_result.x).copy(),
-            name="Stage 2 — L-BFGS-B continuation", method="L-BFGS-B",
-            options=result.config.stage2_options(maxiter), config=result.config,
-            histories=result.histories, record=_record_final(result.problem),
+            result._value_and_grad,
+            np.asarray(result.scipy_result.x).copy(),
+            name="Stage 2 — L-BFGS-B continuation",
+            method="L-BFGS-B",
+            options=result.config.stage2_options(maxiter),
+            config=result.config,
+            histories=result.histories,
+            record=_record_final(result.problem),
         )
     result.scipy_result = optimizer
-    result.runtime_seconds += time.perf_counter()-started
+    result.runtime_seconds += time.perf_counter() - started
     result.refresh()
     if result.output_dir is not None:
         result.save()
@@ -1350,19 +1742,32 @@ def get_mast_wss_path(date, choice="closest"):
     compare_with_mast, with no lookup required.
     """
     import webbpsf
+
     filename = webbpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=True)
     direct = Path(filename).expanduser()
     if direct.is_file():
         return direct
-    path = Path(webbpsf.utils.get_webbpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
+    path = (
+        Path(webbpsf.utils.get_webbpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
+    )
     if not path.is_file():
         raise FileNotFoundError(f"WSS product was identified but is not cached: {path}")
     return path
 
 
-def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm=1000.,
-                      bright_fraction=0.15, cdf_xmax=25., hist_bins=120,
-                      output_dir=None, output_basename="model_comparison", show=True):
+def compare_with_mast(
+    result,
+    mast_wss_path,
+    *,
+    calc_hdu=None,
+    phase_scale_to_nm=1000.0,
+    bright_fraction=0.15,
+    cdf_xmax=25.0,
+    hist_bins=120,
+    output_dir=None,
+    output_basename="model_comparison",
+    show=True,
+):
     """Compare final model/OPD with the official WSS calculated images.
 
     Preserves the PTT notebook's multi-panel figure for either fit mode.
@@ -1395,19 +1800,32 @@ def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm
     COMPARISON_CDF_XMAX = cdf_xmax
     COMPARISON_HIST_BINS = hist_bins
     COMPARISON_OUTPUT_BASENAME = output_basename
-    comparison_output_dir = Path(output_dir).expanduser() if output_dir is not None else result.output_dir
+    comparison_output_dir = (
+        Path(output_dir).expanduser() if output_dir is not None else result.output_dir
+    )
     exposures = result.problem.exposures
     camino_model_images = {pup: result.products[pup]["model"] for pup in exposures}
     camino_opd_plot = np.where(result.problem.display_mask(), result.opd_nm, np.nan)
     with fits.open(mast_wss_path) as hdul:
-        mast_opd_nm = hdul['RESULT_PHASE'].data.astype(float) * phase_scale_to_nm
-        mast_pupil_mask = hdul['PUPIL_MASK'].data.astype(bool)
+        mast_opd_nm = hdul["RESULT_PHASE"].data.astype(float) * phase_scale_to_nm
+        mast_pupil_mask = hdul["PUPIL_MASK"].data.astype(bool)
         mast_psf = {}
         for pup, hdu_index in MAST_CALC_HDU.items():
-            mast_psf[pup], _ = cam.cutout_around_defocused_psf(img=hdul[hdu_index].data.astype(float), size=COMPARISON_PSF_CUTOUT_SIZE)
+            mast_psf[pup], _ = cam.cutout_around_defocused_psf(
+                img=hdul[hdu_index].data.astype(float), size=COMPARISON_PSF_CUTOUT_SIZE
+            )
     mast_opd_nm = np.where(mast_pupil_mask, mast_opd_nm, np.nan)
-    opd_combined = np.concatenate([camino_opd_plot[np.isfinite(camino_opd_plot)].ravel(), mast_opd_nm[np.isfinite(mast_opd_nm)].ravel()])
-    comparison_limP = max(float(np.nanpercentile(np.abs(opd_combined), 99.5)), 1e-9) if opd_combined.size else 1.0
+    opd_combined = np.concatenate(
+        [
+            camino_opd_plot[np.isfinite(camino_opd_plot)].ravel(),
+            mast_opd_nm[np.isfinite(mast_opd_nm)].ravel(),
+        ]
+    )
+    comparison_limP = (
+        max(float(np.nanpercentile(np.abs(opd_combined), 99.5)), 1e-9)
+        if opd_combined.size
+        else 1.0
+    )
 
     def comparison_make_camino_products(exp, model):
         data = np.asarray(exp.data, dtype=float)
@@ -1416,7 +1834,9 @@ def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm
         bad = bad | ~np.isfinite(data) | ~np.isfinite(err) | (err <= 0)
         model = np.asarray(model, dtype=float)
         if model.shape != data.shape:
-            raise ValueError(f'CAMINO model/data shape mismatch: {model.shape} vs {data.shape}')
+            raise ValueError(
+                f"CAMINO model/data shape mismatch: {model.shape} vs {data.shape}"
+            )
         residual = data - model
         zscore = np.full_like(residual, np.nan, dtype=float)
         good = ~bad
@@ -1424,7 +1844,16 @@ def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm
         good = good & np.isfinite(zscore)
         npix = int(np.sum(good))
         mean_z2 = float(np.sum(zscore[good] ** 2) / max(npix, 1))
-        return {'data': data, 'err': err, 'bad': bad, 'model': model, 'resid': residual, 'z': zscore, 'rchisq': mean_z2, 'npix': npix}
+        return {
+            "data": data,
+            "err": err,
+            "bad": bad,
+            "model": model,
+            "resid": residual,
+            "z": zscore,
+            "rchisq": mean_z2,
+            "npix": npix,
+        }
 
     def comparison_make_mast_products(exp, mast_psf_img):
         data = np.asarray(exp.data, dtype=float)
@@ -1433,9 +1862,16 @@ def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm
         bad = bad | ~np.isfinite(data) | ~np.isfinite(err) | (err <= 0)
         psf = np.asarray(mast_psf_img, dtype=float)
         if psf.shape != data.shape:
-            raise ValueError(f'MAST PSF/data shape mismatch: {psf.shape} vs {data.shape}')
+            raise ValueError(
+                f"MAST PSF/data shape mismatch: {psf.shape} vs {data.shape}"
+            )
         psf_unit = psf / (np.nansum(psf) + 1e-12)
-        f_star, b_star = cam.solve_flux_bg_weighted_jax_nansafe(jnp.asarray(data, dtype=jnp.float64), jnp.asarray(err, dtype=jnp.float64), jnp.asarray(bad, dtype=bool), jnp.asarray(psf_unit, dtype=jnp.float64))
+        f_star, b_star = cam.solve_flux_bg_weighted_jax_nansafe(
+            jnp.asarray(data, dtype=jnp.float64),
+            jnp.asarray(err, dtype=jnp.float64),
+            jnp.asarray(bad, dtype=bool),
+            jnp.asarray(psf_unit, dtype=jnp.float64),
+        )
         model = float(f_star) * psf_unit + float(b_star)
         residual = data - model
         zscore = np.full_like(residual, np.nan, dtype=float)
@@ -1444,27 +1880,66 @@ def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm
         good = good & np.isfinite(zscore)
         npix = int(np.sum(good))
         mean_z2 = float(np.sum(zscore[good] ** 2) / max(npix, 1))
-        return {'model': model, 'resid': residual, 'z': zscore, 'rchisq': mean_z2, 'npix': npix, 'flux': float(f_star), 'background': float(b_star)}
-    comparison_out = {pup: comparison_make_camino_products(exposures[pup], camino_model_images[pup]) for pup in ('WLP8', 'WLM8')}
-    comparison_out_mast = {pup: comparison_make_mast_products(exposures[pup], mast_psf[pup]) for pup in ('WLP8', 'WLM8')}
-    for pup in ('WLP8', 'WLM8'):
-        intensity_values = np.concatenate([img[np.isfinite(img)].ravel() for img in (comparison_out[pup]['data'], comparison_out[pup]['model'], comparison_out_mast[pup]['model'])])
-        comparison_out[pup]['vminI'] = np.nanpercentile(intensity_values, 0.5)
-        comparison_out[pup]['vmaxI'] = np.nanpercentile(intensity_values, 99.5)
-        z_comb = np.concatenate([comparison_out[pup]['z'][np.isfinite(comparison_out[pup]['z'])].ravel(), comparison_out_mast[pup]['z'][np.isfinite(comparison_out_mast[pup]['z'])].ravel()])
-        comparison_out[pup]['limZ'] = np.nanpercentile(np.abs(z_comb), 99.5) if z_comb.size else 1.0
-        comparison_out[pup]['limZ'] = max(float(comparison_out[pup]['limZ']), 1e-9)
-        comparison_out[pup]['limH'] = comparison_out[pup]['limZ']
+        return {
+            "model": model,
+            "resid": residual,
+            "z": zscore,
+            "rchisq": mean_z2,
+            "npix": npix,
+            "flux": float(f_star),
+            "background": float(b_star),
+        }
+
+    comparison_out = {
+        pup: comparison_make_camino_products(exposures[pup], camino_model_images[pup])
+        for pup in ("WLP8", "WLM8")
+    }
+    comparison_out_mast = {
+        pup: comparison_make_mast_products(exposures[pup], mast_psf[pup])
+        for pup in ("WLP8", "WLM8")
+    }
+    for pup in ("WLP8", "WLM8"):
+        intensity_values = np.concatenate(
+            [
+                img[np.isfinite(img)].ravel()
+                for img in (
+                    comparison_out[pup]["data"],
+                    comparison_out[pup]["model"],
+                    comparison_out_mast[pup]["model"],
+                )
+            ]
+        )
+        comparison_out[pup]["vminI"] = np.nanpercentile(intensity_values, 0.5)
+        comparison_out[pup]["vmaxI"] = np.nanpercentile(intensity_values, 99.5)
+        z_comb = np.concatenate(
+            [
+                comparison_out[pup]["z"][np.isfinite(comparison_out[pup]["z"])].ravel(),
+                comparison_out_mast[pup]["z"][
+                    np.isfinite(comparison_out_mast[pup]["z"])
+                ].ravel(),
+            ]
+        )
+        comparison_out[pup]["limZ"] = (
+            np.nanpercentile(np.abs(z_comb), 99.5) if z_comb.size else 1.0
+        )
+        comparison_out[pup]["limZ"] = max(float(comparison_out[pup]["limZ"]), 1e-9)
+        comparison_out[pup]["limH"] = comparison_out[pup]["limZ"]
 
     def comparison_collect_abs_z(bright_frac=None):
         all_model = []
         all_mast = []
-        for pup in ('WLP8', 'WLM8'):
-            data = comparison_out[pup]['data']
-            z_model = comparison_out[pup]['z']
-            z_mast = comparison_out_mast[pup]['z']
-            err = comparison_out[pup]['err']
-            good = np.isfinite(z_model) & np.isfinite(z_mast) & np.isfinite(err) & (err > 0) & np.isfinite(data)
+        for pup in ("WLP8", "WLM8"):
+            data = comparison_out[pup]["data"]
+            z_model = comparison_out[pup]["z"]
+            z_mast = comparison_out_mast[pup]["z"]
+            err = comparison_out[pup]["err"]
+            good = (
+                np.isfinite(z_model)
+                & np.isfinite(z_mast)
+                & np.isfinite(err)
+                & (err > 0)
+                & np.isfinite(data)
+            )
             if bright_frac is not None and np.any(good):
                 threshold = np.percentile(data[good], 100 * (1 - bright_frac))
                 good = good & (data >= threshold)
@@ -1474,132 +1949,327 @@ def compare_with_mast(result, mast_wss_path, *, calc_hdu=None, phase_scale_to_nm
 
     def make_camino_mast_comparison_figure():
         cmap_opd = plt.cm.RdBu_r.copy()
-        cmap_opd.set_bad(color='black')
+        cmap_opd.set_bad(color="black")
         fig = plt.figure(figsize=(13.8, 11.0), constrained_layout=False)
-        gs = GridSpec(4, 5, figure=fig, width_ratios=[1.0, 1.0, 1.0, 0.1, 1.3], wspace=0.35, hspace=0.35)
-        right_gs = gs[:, 4].subgridspec(5, 1, height_ratios=[1.2, 0.05, 1.2, 0.05, 0.9], hspace=0.08)
+        gs = GridSpec(
+            4,
+            5,
+            figure=fig,
+            width_ratios=[1.0, 1.0, 1.0, 0.1, 1.3],
+            wspace=0.35,
+            hspace=0.35,
+        )
+        right_gs = gs[:, 4].subgridspec(
+            5, 1, height_ratios=[1.2, 0.05, 1.2, 0.05, 0.9], hspace=0.08
+        )
 
-        def image_panel(ax, image, title, cmap='inferno', vmin=None, vmax=None, show_cbar_labels=True):
-            im = ax.imshow(image, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
+        def image_panel(
+            ax,
+            image,
+            title,
+            cmap="inferno",
+            vmin=None,
+            vmax=None,
+            show_cbar_labels=True,
+        ):
+            im = ax.imshow(image, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
             cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             if not show_cbar_labels:
                 cb.ax.set_yticks([])
-                cb.ax.tick_params(left=False, right=False, labelleft=False, labelright=False)
+                cb.ax.tick_params(
+                    left=False, right=False, labelleft=False, labelright=False
+                )
             ax.set_title(title, fontsize=11)
             ax.minorticks_on()
-            tick_color = 'white' if cmap == 'inferno' else 'black'
-            ax.tick_params(which='major', direction='in', top=True, right=True, length=6, width=1.2, colors=tick_color, labelcolor=tick_color)
-            ax.tick_params(which='minor', direction='in', top=True, right=True, length=3, width=0.8, colors=tick_color)
-            if cmap == 'RdBu_r':
+            tick_color = "white" if cmap == "inferno" else "black"
+            ax.tick_params(
+                which="major",
+                direction="in",
+                top=True,
+                right=True,
+                length=6,
+                width=1.2,
+                colors=tick_color,
+                labelcolor=tick_color,
+            )
+            ax.tick_params(
+                which="minor",
+                direction="in",
+                top=True,
+                right=True,
+                length=3,
+                width=0.8,
+                colors=tick_color,
+            )
+            if cmap == "RdBu_r":
                 ax.tick_params(labelbottom=False, labelleft=False)
             return im
 
-        def histogram_panel(ax, z_model, z_mast, title, xlim, rchisq_model, rchisq_mast):
+        def histogram_panel(
+            ax, z_model, z_mast, title, xlim, rchisq_model, rchisq_mast
+        ):
             z1 = z_model[np.isfinite(z_model)].ravel()
             z2 = z_mast[np.isfinite(z_mast)].ravel()
             xmin = -xlim
             xmax = xlim
             edges = np.linspace(xmin, xmax, COMPARISON_HIST_BINS + 1)
-            h_model, _, _ = ax.hist(z1, bins=edges, density=True, alpha=0.6, label='Model')
-            h_mast, _, _ = ax.hist(z2, bins=edges, density=True, alpha=0.4, label='MAST')
+            h_model, _, _ = ax.hist(
+                z1, bins=edges, density=True, alpha=0.6, label="Model"
+            )
+            h_mast, _, _ = ax.hist(
+                z2, bins=edges, density=True, alpha=0.4, label="MAST"
+            )
             ax.set_xlim(xmin, xmax)
-            ymax = 1.1 * max(np.nanmax(h_model) if h_model.size else 0, np.nanmax(h_mast) if h_mast.size else 0)
+            ymax = 1.1 * max(
+                np.nanmax(h_model) if h_model.size else 0,
+                np.nanmax(h_mast) if h_mast.size else 0,
+            )
             ax.set_ylim(0.0005, ymax)
             ax.set_title(title, fontsize=11)
-            ax.set_xlabel('z-score', labelpad=-2)
-            ax.set_ylabel('Density', labelpad=2)
+            ax.set_xlabel("z-score", labelpad=-2)
+            ax.set_ylabel("Density", labelpad=2)
             ax.minorticks_on()
-            ax.tick_params(which='major', direction='in', top=True, right=True, length=6, width=1.2)
-            ax.tick_params(which='minor', direction='in', top=True, right=True, length=3, width=0.8)
-            ax.grid(which='major', alpha=0.4, linewidth=0.8)
-            ax.grid(which='minor', alpha=0.2, linewidth=0.5)
-            ax.axvline(0, color='k', ls=':', lw=1)
-            ax.text(0.94, 0.97, rf'$\chi^2_\nu$ = {rchisq_model:.2f}',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=9, color='tab:blue')
-            ax.text(0.94, 0.86, rf'$\chi^2_\nu$ = {rchisq_mast:.2f}',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=9, color='tab:orange')
-            legend = ax.legend(frameon=False, fontsize=9, loc='upper left',
-                               handlelength=1.0, handletextpad=0.5)
+            ax.tick_params(
+                which="major", direction="in", top=True, right=True, length=6, width=1.2
+            )
+            ax.tick_params(
+                which="minor", direction="in", top=True, right=True, length=3, width=0.8
+            )
+            ax.grid(which="major", alpha=0.4, linewidth=0.8)
+            ax.grid(which="minor", alpha=0.2, linewidth=0.5)
+            ax.axvline(0, color="k", ls=":", lw=1)
+            ax.text(
+                0.94,
+                0.97,
+                rf"$\chi^2_\nu$ = {rchisq_model:.2f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=9,
+                color="tab:blue",
+            )
+            ax.text(
+                0.94,
+                0.86,
+                rf"$\chi^2_\nu$ = {rchisq_mast:.2f}",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=9,
+                color="tab:orange",
+            )
+            legend = ax.legend(
+                frameon=False,
+                fontsize=9,
+                loc="upper left",
+                handlelength=1.0,
+                handletextpad=0.5,
+            )
             for txt in legend.get_texts():
-                if txt.get_text().startswith('Model'):
-                    txt.set_color('tab:blue')
-                elif txt.get_text().startswith('MAST'):
-                    txt.set_color('tab:orange')
+                if txt.get_text().startswith("Model"):
+                    txt.set_color("tab:blue")
+                elif txt.get_text().startswith("MAST"):
+                    txt.set_color("tab:orange")
             ax.set_box_aspect(1)
 
         def opd_panel(ax, image, title, label, label_color):
-            im = ax.imshow(image, origin='lower', cmap=cmap_opd, vmin=-comparison_limP, vmax=comparison_limP)
+            im = ax.imshow(
+                image,
+                origin="lower",
+                cmap=cmap_opd,
+                vmin=-comparison_limP,
+                vmax=comparison_limP,
+            )
             ax.set_title(title, fontsize=11)
             ax.minorticks_on()
-            ax.tick_params(which='major', direction='in', top=True, right=True, length=6, width=1.2, colors='white', labelbottom=False, labelleft=False)
-            ax.tick_params(which='minor', direction='in', top=True, right=True, length=3, width=0.8, colors='white')
-            ax.text(0.04, 0.98, f'{image.shape[0]}×{image.shape[1]}', transform=ax.transAxes, ha='left', va='top', color='white', fontsize=9, weight='bold')
-            ax.text(0.04, 0.035, label, transform=ax.transAxes, ha='left', va='bottom', color=label_color, fontsize=9, weight='bold')
+            ax.tick_params(
+                which="major",
+                direction="in",
+                top=True,
+                right=True,
+                length=6,
+                width=1.2,
+                colors="white",
+                labelbottom=False,
+                labelleft=False,
+            )
+            ax.tick_params(
+                which="minor",
+                direction="in",
+                top=True,
+                right=True,
+                length=3,
+                width=0.8,
+                colors="white",
+            )
+            ax.text(
+                0.04,
+                0.98,
+                f"{image.shape[0]}×{image.shape[1]}",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                color="white",
+                fontsize=9,
+                weight="bold",
+            )
+            ax.text(
+                0.04,
+                0.035,
+                label,
+                transform=ax.transAxes,
+                ha="left",
+                va="bottom",
+                color=label_color,
+                fontsize=9,
+                weight="bold",
+            )
             divider = make_axes_locatable(ax)
-            cax = divider.append_axes('right', size='4%', pad=0.04)
+            cax = divider.append_axes("right", size="4%", pad=0.04)
             cb = fig.colorbar(im, cax=cax)
-            cb.ax.set_title('nm', fontsize=8)
+            cb.ax.set_title("nm", fontsize=8)
             cb.ax.tick_params(labelsize=8)
-        row0 = {'WLP8': 0, 'WLM8': 2}
+
+        row0 = {"WLP8": 0, "WLM8": 2}
         z_axes = []
-        for pup in ('WLP8', 'WLM8'):
+        for pup in ("WLP8", "WLM8"):
             row = row0[pup]
             prod = comparison_out[pup]
             mast = comparison_out_mast[pup]
-            image_panel(fig.add_subplot(gs[row, 0]), prod['data'], f'{pup}: Data', 'inferno', prod['vminI'], prod['vmaxI'], show_cbar_labels=True)
-            image_panel(fig.add_subplot(gs[row, 1]), prod['model'], f'{pup}: Model', 'inferno', prod['vminI'], prod['vmaxI'], show_cbar_labels=True)
+            image_panel(
+                fig.add_subplot(gs[row, 0]),
+                prod["data"],
+                f"{pup}: Data",
+                "inferno",
+                prod["vminI"],
+                prod["vmaxI"],
+                show_cbar_labels=True,
+            )
+            image_panel(
+                fig.add_subplot(gs[row, 1]),
+                prod["model"],
+                f"{pup}: Model",
+                "inferno",
+                prod["vminI"],
+                prod["vmaxI"],
+                show_cbar_labels=True,
+            )
             ax_z_model = fig.add_subplot(gs[row, 2])
             z_axes.append(ax_z_model)
-            image_panel(ax_z_model, prod['z'], f'{pup}: Model z-score', 'RdBu_r', -prod['limZ'], prod['limZ'])
-            histogram_panel(fig.add_subplot(gs[row + 1, 0]), prod['z'], mast['z'], f'{pup}: Normalised residuals', prod['limH'], prod['rchisq'], mast['rchisq'])
-            image_panel(fig.add_subplot(gs[row + 1, 1]), mast['model'], f'{pup}: MAST', 'inferno', prod['vminI'], prod['vmaxI'], show_cbar_labels=True)
+            image_panel(
+                ax_z_model,
+                prod["z"],
+                f"{pup}: Model z-score",
+                "RdBu_r",
+                -prod["limZ"],
+                prod["limZ"],
+            )
+            histogram_panel(
+                fig.add_subplot(gs[row + 1, 0]),
+                prod["z"],
+                mast["z"],
+                f"{pup}: Normalised residuals",
+                prod["limH"],
+                prod["rchisq"],
+                mast["rchisq"],
+            )
+            image_panel(
+                fig.add_subplot(gs[row + 1, 1]),
+                mast["model"],
+                f"{pup}: MAST",
+                "inferno",
+                prod["vminI"],
+                prod["vmaxI"],
+                show_cbar_labels=True,
+            )
             ax_z_mast = fig.add_subplot(gs[row + 1, 2])
             z_axes.append(ax_z_mast)
-            image_panel(ax_z_mast, mast['z'], f'{pup}: MAST z-score', 'RdBu_r', -prod['limZ'], prod['limZ'])
+            image_panel(
+                ax_z_mast,
+                mast["z"],
+                f"{pup}: MAST z-score",
+                "RdBu_r",
+                -prod["limZ"],
+                prod["limZ"],
+            )
         ax_camino_opd = fig.add_subplot(right_gs[0, 0])
-        opd_panel(ax_camino_opd, camino_opd_plot, 'Model OPD', 'Model', '#4fc3ff')
+        opd_panel(ax_camino_opd, camino_opd_plot, "Model OPD", "Model", "#4fc3ff")
         ax_mast_opd = fig.add_subplot(right_gs[2, 0])
-        opd_panel(ax_mast_opd, mast_opd_nm, 'MAST OPD', 'MAST', '#ffb347')
+        opd_panel(ax_mast_opd, mast_opd_nm, "MAST OPD", "MAST", "#ffb347")
         ax_cdf = fig.add_subplot(right_gs[4, 0])
         ax_cdf.set_box_aspect(1)
         absz_model, absz_mast = comparison_collect_abs_z()
-        absz_model_bright, absz_mast_bright = comparison_collect_abs_z(bright_frac=COMPARISON_BRIGHT_FRACTION)
+        absz_model_bright, absz_mast_bright = comparison_collect_abs_z(
+            bright_frac=COMPARISON_BRIGHT_FRACTION
+        )
 
         def plot_cdf(values, label, **kwargs):
             x = np.sort(values)
             y = np.arange(1, x.size + 1) / x.size
             ax_cdf.plot(x, y, label=label, **kwargs)
-        plot_cdf(absz_model, 'Model, all pixels', lw=2, color='#1f77b4', alpha=0.4)
-        plot_cdf(absz_mast, 'MAST, all pixels', lw=2, color='#ff7f0e', alpha=0.4)
-        plot_cdf(absz_model_bright, f'Model, brightest {100 * COMPARISON_BRIGHT_FRACTION:.0f}%', lw=2, ls='--', color='#1f77b4', alpha=0.9)
-        plot_cdf(absz_mast_bright, f'MAST, brightest {100 * COMPARISON_BRIGHT_FRACTION:.0f}%', lw=2, ls='--', color='#ff7f0e', alpha=0.9)
-        ax_cdf.set_title('Cumulative $|z|$', fontsize=11)
-        ax_cdf.set_xlabel('$|z|$', fontsize=11)
-        ax_cdf.set_ylabel('Cumulative fraction', fontsize=11)
+
+        plot_cdf(absz_model, "Model, all pixels", lw=2, color="#1f77b4", alpha=0.4)
+        plot_cdf(absz_mast, "MAST, all pixels", lw=2, color="#ff7f0e", alpha=0.4)
+        plot_cdf(
+            absz_model_bright,
+            f"Model, brightest {100 * COMPARISON_BRIGHT_FRACTION:.0f}%",
+            lw=2,
+            ls="--",
+            color="#1f77b4",
+            alpha=0.9,
+        )
+        plot_cdf(
+            absz_mast_bright,
+            f"MAST, brightest {100 * COMPARISON_BRIGHT_FRACTION:.0f}%",
+            lw=2,
+            ls="--",
+            color="#ff7f0e",
+            alpha=0.9,
+        )
+        ax_cdf.set_title("Cumulative $|z|$", fontsize=11)
+        ax_cdf.set_xlabel("$|z|$", fontsize=11)
+        ax_cdf.set_ylabel("Cumulative fraction", fontsize=11)
         ax_cdf.set_xlim(0, COMPARISON_CDF_XMAX)
         ax_cdf.set_ylim(0, 1)
         ax_cdf.minorticks_on()
-        ax_cdf.tick_params(which='major', direction='in', top=True, right=True, length=6, width=1.2)
-        ax_cdf.tick_params(which='minor', direction='in', top=True, right=True, length=3, width=0.8)
-        ax_cdf.grid(which='major', alpha=0.4, linewidth=0.8)
-        ax_cdf.grid(which='minor', alpha=0.2, linewidth=0.5)
-        ax_cdf.legend(frameon=False, fontsize=8, loc='lower right')
+        ax_cdf.tick_params(
+            which="major", direction="in", top=True, right=True, length=6, width=1.2
+        )
+        ax_cdf.tick_params(
+            which="minor", direction="in", top=True, right=True, length=3, width=0.8
+        )
+        ax_cdf.grid(which="major", alpha=0.4, linewidth=0.8)
+        ax_cdf.grid(which="minor", alpha=0.2, linewidth=0.5)
+        ax_cdf.legend(frameon=False, fontsize=8, loc="lower right")
         fig.canvas.draw()
         opd_left = ax_camino_opd.get_position().x0
         x_sep = opd_left - 0.05
         y_bottom = min((ax.get_position().y0 for ax in z_axes))
         y_top = max((ax.get_position().y1 for ax in z_axes))
-        fig.add_artist(Line2D([x_sep, x_sep], [y_bottom, y_top], transform=fig.transFigure, color='k', lw=1.2, alpha=1, zorder=100))
+        fig.add_artist(
+            Line2D(
+                [x_sep, x_sep],
+                [y_bottom, y_top],
+                transform=fig.transFigure,
+                color="k",
+                lw=1.2,
+                alpha=1,
+                zorder=100,
+            )
+        )
         if comparison_output_dir is not None:
             comparison_output_dir.mkdir(parents=True, exist_ok=True)
             output_base = comparison_output_dir / COMPARISON_OUTPUT_BASENAME
-            fig.savefig(str(output_base) + '.pdf', bbox_inches='tight', dpi=300)
-            fig.savefig(str(output_base) + '.png', bbox_inches='tight', dpi=300)
+            fig.savefig(str(output_base) + ".pdf", bbox_inches="tight", dpi=300)
+            fig.savefig(str(output_base) + ".png", bbox_inches="tight", dpi=300)
         return fig
+
     figure = make_camino_mast_comparison_figure()
     for pup in exposures:
-        print(f"{pup}: CAMINO mean(z²)={comparison_out[pup]['rchisq']:.3f}; "
-              f"MAST mean(z²)={comparison_out_mast[pup]['rchisq']:.3f}")
+        print(
+            f"{pup}: CAMINO mean(z²)={comparison_out[pup]['rchisq']:.3f}; "
+            f"MAST mean(z²)={comparison_out_mast[pup]['rchisq']:.3f}"
+        )
     if show:
         plt.show()
     return dict(figure=figure, camino=comparison_out, mast=comparison_out_mast)
