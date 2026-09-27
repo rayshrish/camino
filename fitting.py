@@ -56,6 +56,7 @@ Source notebooks:
     githubversioncaminofit_lbfgsb(4).ipynb
     fit_real_event_grouped_physical_ptt(2).ipynb
 """
+
 from __future__ import annotations
 
 from contextlib import contextmanager
