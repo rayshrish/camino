@@ -30,6 +30,11 @@ dependencies = [
   "zodiax==0.4.1",
   "optax==0.2.4",
   "dLux==0.14.0",
+  "scikit-image",
+  "tqdm",
+  "matplotlib",
+  "stpsf",
+  "astroquery",
 ]
 
 [project.optional-dependencies]

@@ -14,6 +14,8 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import astropy.io.fits as fits
 
+from importlib.resources import files
+
 import dLux as dl
 
 if plot_flag==1:
@@ -1153,7 +1155,7 @@ import numpy as onp
 # ... your earlier imports (jax, eqx, jsp, etc.) ...
 
 
-filter_file = "F212N.dat"
+filter_file = str(files("camino_data") / "F212N.dat")
 
 def calc_throughput(file_path, nwavels=1):
 
@@ -1547,7 +1549,7 @@ def get_filter_test(file):
     return final
 
 
-FILTER_FILE = "F212N.dat"
+FILTER_FILE = str(files("camino_data") / "F212N.dat")
 
 filter_files = {
     "F212N": get_filter_test(FILTER_FILE)[:5, :]
