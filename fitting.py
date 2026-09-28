@@ -976,14 +976,28 @@ class FitProblem:
 
 
 def load_data(
-    wlp8_path, wlm8_path, *, pupil_path, filter_path, fit_mode=None, config=None
+    wlp8_path,
+    wlm8_path,
+    *,
+    pupil_path=None,
+    filter_path=None,
+    fit_mode=None,
+    config=None,
 ):
     """Load one WLP8/WLM8 pair and initialise a ZERO OPD in both modes.
 
-    The pupil FITS and two-column Angstrom/transmission filter table are
-    explicit inputs. No download, previous-epoch lookup or old-OPD loading
-    occurs. Returned FitProblem can be passed to fit_data(data=...).
+    By default, the bundled JWST pupil FITS and F212N throughput table are used.
+    Custom pupil_path and filter_path values may still be supplied explicitly.
     """
+
+    from importlib.resources import files
+
+    if pupil_path is None:
+        pupil_path = files("camino_data") / "jwst_pupil_flight_npix1024.fits"
+
+    if filter_path is None:
+        filter_path = files("camino_data") / "F212N.dat"
+
     c = _resolve_config(fit_mode, config)
     paths = {
         k: str(Path(v).expanduser().resolve())
