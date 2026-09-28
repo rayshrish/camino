@@ -66,9 +66,7 @@ def _parse_opd_filename(opd_path: str | Path) -> tuple[str, str]:
 
     m = re.search(r"-(NRC[AB]\d)_([^ -]+)-", basename)
     if not m:
-        raise ValueError(
-            f"Couldn't parse detector from OPD filename: {basename}"
-        )
+        raise ValueError(f"Couldn't parse detector from OPD filename: {basename}")
 
     return opd_token, m.group(1)
 
@@ -195,9 +193,7 @@ def _find_cal_product(fileset_name: str, detector: str):
     ]
 
     if not selected:
-        raise RuntimeError(
-            f"No {detector} _cal.fits product found for {fileset_name}"
-        )
+        raise RuntimeError(f"No {detector} _cal.fits product found for {fileset_name}")
 
     return selected[0]
 
@@ -304,9 +300,7 @@ def download_wlp8_wlm8(
             wlm8, wlp8 = _pick_earliest_pair(matches)
 
             if wlm8 is None or wlp8 is None:
-                failures.append(
-                    f"{entry['opd_token']}: no complete WLM8/WLP8 pair"
-                )
+                failures.append(f"{entry['opd_token']}: no complete WLM8/WLP8 pair")
                 continue
 
             if verbose:
