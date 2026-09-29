@@ -16,6 +16,12 @@ def make_donut(shape=(64, 64), centre=(37.0, 26.0), radius=9.0, width=2.5):
     return 1000.0 * np.exp(-0.5 * ((r - radius) / width) ** 2) + 5.0
 
 
+@pytest.fixture(autouse=True)
+def isolated_mast_cache(tmp_path, monkeypatch):
+    """Keep tests away from the user's MAST lookup cache."""
+    monkeypatch.setenv("CAMINO_CACHE_DIR", str(tmp_path / "camino_cache"))
+
+
 @pytest.fixture
 def donut_image():
     return make_donut()

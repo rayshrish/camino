@@ -21,6 +21,7 @@ astroquery
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import sys
@@ -38,6 +39,35 @@ from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import MastMissions
 
 _MAST = MastMissions(mission="jwst")
+
+
+def _cache_file() -> Path:
+    root = os.environ.get("CAMINO_CACHE_DIR") or Path.home() / ".cache" / "camino"
+    return Path(root) / "mast_lookups.json"
+
+
+def cached_lookup(kind: str, key: str, compute):
+    """Return compute() for (kind, key), caching the JSON result on disk.
+
+    MAST lookups for past observations don't change, so results are kept in
+    ~/.cache/camino/mast_lookups.json (or $CAMINO_CACHE_DIR) and later runs,
+    including the example notebooks, need no network once files are local.
+    Delete the file to clear the cache. Failures are not cached.
+    """
+    path = _cache_file()
+    try:
+        cache = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        cache = {}
+    if key in cache.get(kind, {}):
+        return cache[kind][key]
+    value = compute()
+    cache.setdefault(kind, {})[key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cache, indent=1))
+    tmp.replace(path)
+    return value
 
 
 @contextmanager
@@ -103,46 +133,45 @@ def _metadata_from_time(dt_utc: datetime, verbose: bool = False) -> dict[str, st
     """
     if dt_utc.tzinfo is not None:
         dt_utc = dt_utc.astimezone(timezone.utc).replace(tzinfo=None)
+    return cached_lookup(
+        "opd_metadata",
+        dt_utc.isoformat(timespec="seconds"),
+        lambda: _query_metadata(dt_utc, verbose),
+    )
 
+
+def _query_metadata(dt_utc: datetime, verbose: bool) -> dict[str, str]:
+    # The WSS OPD stays in the stpsf data directory: comparing a fit with
+    # MAST needs it again.
     with hide_download_messages():
         opd_path = stpsf.mast_wss.get_opd_at_time(
             dt_utc,
             verbose=verbose,
         )
 
-    try:
-        with fits.open(opd_path) as hdul:
-            obs_id = hdul[0].header.get("OBS_ID")
+    with fits.open(opd_path) as hdul:
+        obs_id = hdul[0].header.get("OBS_ID")
 
-        if obs_id is None:
-            raise ValueError(f"OPD file missing OBS_ID: {opd_path}")
+    if obs_id is None:
+        raise ValueError(f"OPD file missing OBS_ID: {opd_path}")
 
-        opd_token, detector = _parse_opd_filename(opd_path)
-        jw_stem = _opd_obsid_to_jw_stem(obs_id)
+    opd_token, detector = _parse_opd_filename(opd_path)
+    jw_stem = _opd_obsid_to_jw_stem(obs_id)
 
-        proposal_id = jw_stem[:5]
-        visit_stem = jw_stem.split("_")[0]
-        want_prefix = "jw" + visit_stem + "_"
+    proposal_id = jw_stem[:5]
+    visit_stem = jw_stem.split("_")[0]
+    want_prefix = "jw" + visit_stem + "_"
 
-        return {
-            "opd_token": opd_token,
-            "obs_id": str(obs_id),
-            "jw_stem": jw_stem,
-            "proposal_id": proposal_id,
-            "visit_stem": visit_stem,
-            "want_prefix": want_prefix,
-            "detector": detector,
-            "opd_path": str(opd_path),
-        }
-
-    finally:
-        # The metadata notebook deleted OPDs after reading them to avoid
-        # accumulating files on disk. Keep the same behaviour here.
-        try:
-            if opd_path and os.path.exists(opd_path):
-                os.remove(opd_path)
-        except OSError:
-            pass
+    return {
+        "opd_token": opd_token,
+        "obs_id": str(obs_id),
+        "jw_stem": jw_stem,
+        "proposal_id": proposal_id,
+        "visit_stem": visit_stem,
+        "want_prefix": want_prefix,
+        "detector": detector,
+        "opd_path": str(opd_path),
+    }
 
 
 def _fetch_matches(entry: dict[str, str]) -> list[dict[str, Any]]:
@@ -153,7 +182,14 @@ def _fetch_matches(entry: dict[str, str]) -> list[dict[str, Any]]:
     program = str(int(entry["proposal_id"]))
     detector = entry["detector"]
     want_prefix = entry["want_prefix"]
+    return cached_lookup(
+        "exposure_matches",
+        f"{program}|{detector}|{want_prefix}",
+        lambda: _query_matches(program, detector, want_prefix),
+    )
 
+
+def _query_matches(program: str, detector: str, want_prefix: str) -> list:
     rows = _MAST.query_criteria(
         program=program,
         detector=detector,
@@ -207,6 +243,14 @@ def _pick_earliest_pair(
 
 def _find_cal_product(fileset_name: str, detector: str):
     """Find the detector-specific ``_cal.fits`` product for a MAST fileset."""
+    return cached_lookup(
+        "cal_products",
+        f"{fileset_name}|{detector}",
+        lambda: _query_cal_product(fileset_name, detector),
+    )
+
+
+def _query_cal_product(fileset_name: str, detector: str) -> dict[str, str]:
     products = _MAST.get_product_list(fileset_name)
     fits_products = _MAST.filter_products(products, extension="fits")
 
@@ -222,7 +266,7 @@ def _find_cal_product(fileset_name: str, detector: str):
     if not selected:
         raise RuntimeError(f"No {detector} _cal.fits product found for {fileset_name}")
 
-    return selected[0]
+    return {key: str(selected[0][key]) for key in ("filename", "uri")}
 
 
 def _download_product(
@@ -383,6 +427,59 @@ def download_wlp8_wlm8(
     )
 
 
+def _cutoff(observing_date, end_of_day):
+    """Naive-UTC cutoff: a datetime as given, or the start/end of a date."""
+    if isinstance(observing_date, datetime):
+        if observing_date.tzinfo is not None:
+            observing_date = observing_date.astimezone(timezone.utc)
+        return observing_date.replace(tzinfo=None)
+    if not isinstance(observing_date, Date):
+        observing_date = Date.fromisoformat(str(observing_date))
+    return datetime.combine(observing_date, time(23, 59, 59) if end_of_day else time())
+
+
+def _query_opds_around(cutoff):
+    # stpsf widens its time window until a query succeeds, so the empty
+    # early queries are expected.
+    with hide_download_messages(), warnings.catch_warnings():
+        warnings.simplefilter("ignore", NoResultsWarning)
+        result = stpsf.mast_wss.mast_wss_opds_around_date_query(
+            Time(cutoff, scale="utc"), verbose=False
+        )
+    prev_opd, next_opd, prev_days, next_days = result
+    return [str(prev_opd), str(next_opd), float(prev_days), float(next_days)]
+
+
+def _adjacent_wfs_epoch(cutoff, step, max_tries, verbose, label):
+    """Step (+1 later, -1 earlier) through WSS OPDs from cutoff until one's
+    visit has a complete F212N WLP8/WLM8 pair; return its naive UTC time."""
+    skipped: list[str] = []
+    for _ in range(max_tries):
+        # stpsf widens its time window until a query succeeds, so the
+        # empty early queries are expected.
+        prev_opd, next_opd, prev_days, next_days = cached_lookup(
+            "opds_around",
+            cutoff.isoformat(timespec="seconds"),
+            lambda cutoff=cutoff: _query_opds_around(cutoff),
+        )
+        opd, days = (next_opd, next_days) if step > 0 else (prev_opd, prev_days)
+        epoch = cutoff + timedelta(days=float(days))
+        entry = _metadata_from_time(epoch.replace(tzinfo=timezone.utc))
+        wlm8, wlp8 = _pick_earliest_pair(_fetch_matches(entry))
+        if wlm8 is not None and wlp8 is not None:
+            if verbose:
+                print(
+                    f"{label} epoch: {epoch:%Y-%m-%d %H:%M} UTC ({entry['opd_token']})"
+                )
+            return epoch
+        skipped.append(str(opd))
+        cutoff = epoch + step * timedelta(minutes=1)
+    raise LookupError(
+        f"No WLP8/WLM8 pair in the {max_tries} WSS epochs "
+        f"{'after' if step > 0 else 'before'} the cutoff: {', '.join(skipped)}"
+    )
+
+
 def next_wfs_epoch(
     observing_date: str | Date,
     *,
@@ -408,35 +505,23 @@ def next_wfs_epoch(
     verbose
         Print the selected OPD.
     """
-    if isinstance(observing_date, datetime):
-        after = observing_date
-        if after.tzinfo is not None:
-            after = after.astimezone(timezone.utc).replace(tzinfo=None)
-    else:
-        if not isinstance(observing_date, Date):
-            observing_date = Date.fromisoformat(str(observing_date))
-        after = datetime.combine(observing_date, time(23, 59, 59))
+    cutoff = _cutoff(observing_date, end_of_day=True)
+    return _adjacent_wfs_epoch(cutoff, +1, max_tries, verbose, "Next")
 
-    skipped: list[str] = []
-    for _ in range(max_tries):
-        # stpsf widens its time window until a query succeeds, so the
-        # empty early queries are expected.
-        with hide_download_messages(), warnings.catch_warnings():
-            warnings.simplefilter("ignore", NoResultsWarning)
-            _, next_opd, _, delta_days = stpsf.mast_wss.mast_wss_opds_around_date_query(
-                Time(after, scale="utc"), verbose=False
-            )
-        epoch = after + timedelta(days=float(delta_days))
-        entry = _metadata_from_time(epoch.replace(tzinfo=timezone.utc))
-        wlm8, wlp8 = _pick_earliest_pair(_fetch_matches(entry))
-        if wlm8 is not None and wlp8 is not None:
-            if verbose:
-                print(f"Next epoch: {epoch:%Y-%m-%d %H:%M} UTC ({entry['opd_token']})")
-            return epoch
-        skipped.append(str(next_opd))
-        after = epoch + timedelta(minutes=1)
 
-    raise LookupError(
-        f"No WLP8/WLM8 pair in the {max_tries} WSS epochs after "
-        f"{observing_date}: {', '.join(skipped)}"
-    )
+def previous_wfs_epoch(
+    observing_date: str | Date,
+    *,
+    max_tries: int = 5,
+    verbose: bool = True,
+) -> datetime:
+    """
+    Return the time of the last WSS epoch before ``observing_date``.
+
+    The mirror image of :func:`next_wfs_epoch`: epochs on the given UTC day
+    are excluded, and a ``datetime`` (for example
+    ``FitProblem.observation_time`` minus a minute) excludes that time and
+    later.
+    """
+    cutoff = _cutoff(observing_date, end_of_day=False)
+    return _adjacent_wfs_epoch(cutoff, -1, max_tries, verbose, "Previous")
