@@ -1474,7 +1474,12 @@ def _make_final_objective(problem, base_params):
             return {**base, "aberrations_shared": pixel * 1e-9}
 
     else:
-        x0 = np.concatenate([np.asarray(base["bad_plane_nm"]), np.zeros(n_pixels)])
+        # A warm start carries its pixel residual; after the PTT stages it is zero.
+        pixel = base.get("full_pixel_opd_nm")
+        pixel = (
+            np.zeros(n_pixels) if pixel is None else np.asarray(pixel)[np.asarray(mask)]
+        )
+        x0 = np.concatenate([np.asarray(base["bad_plane_nm"]), pixel])
 
         def unpack(x):
             pixel = embed(jnp.asarray(x[problem.n_ptt :], dtype=jnp.float64))
@@ -1732,7 +1737,11 @@ def _initial_params_from(initial, problem):
             else None
         )
         label = path.name
-    if mode is not None and mode != c.fit_mode:
+    if mode is None:
+        # final_params.npz and plain dicts carry no config; PTT fits are the
+        # ones with explicit plane coefficients.
+        mode = "ptt_pixel" if "bad_plane_nm" in source else "pixel"
+    if mode != c.fit_mode:
         raise ValueError(f"Cannot warm-start a {c.fit_mode} fit from a {mode} fit")
     required = (
         ("bad_plane_nm",) if c.fit_mode == "ptt_pixel" else ("aberrations_shared",)

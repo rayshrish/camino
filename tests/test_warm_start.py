@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from camino.fitting import FitConfig, _initial_params_from
+from camino.fitting import FitConfig, _initial_params_from, _make_final_objective
 
 
 @pytest.mark.parametrize("npix", [128, 256])
@@ -85,3 +85,29 @@ def test_warm_start_rejects_other_pupil_sampling():
 def test_warm_start_requires_an_opd():
     with pytest.raises(ValueError, match="aberrations_shared"):
         _initial_params_from({"positions_wlp8_xy": np.zeros(2)}, _pixel_problem())
+
+
+def test_warm_start_infers_ptt_mode_without_config(tmp_path):
+    # final_params.npz has no config_json; its PTT coefficients identify the mode.
+    path = tmp_path / "final_params.npz"
+    np.savez(path, aberrations_shared=np.ones((8, 8)), bad_plane_nm=np.zeros(54))
+
+    with pytest.raises(ValueError, match="ptt_pixel"):
+        _initial_params_from(path, _pixel_problem())
+
+
+def test_ptt_final_stage_starts_from_previous_pixel_residual():
+    mask = np.zeros((6, 6), dtype=bool)
+    mask[1:5, 1:5] = True
+    pixel = np.arange(36.0).reshape(6, 6)
+    problem = SimpleNamespace(
+        config=FitConfig.for_mode("ptt_pixel"),
+        mirror_mask=jnp.asarray(mask),
+        n_ptt=3,
+    )
+    base = dict(bad_plane_nm=np.array([1.0, 2.0, 3.0]), full_pixel_opd_nm=pixel)
+
+    x0, _, _ = _make_final_objective(problem, base)
+
+    np.testing.assert_allclose(x0[:3], [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(x0[3:], pixel[mask])

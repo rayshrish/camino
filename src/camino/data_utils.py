@@ -409,7 +409,9 @@ def next_wfs_epoch(
         Print the selected OPD.
     """
     if isinstance(observing_date, datetime):
-        after = observing_date.replace(tzinfo=None)
+        after = observing_date
+        if after.tzinfo is not None:
+            after = after.astimezone(timezone.utc).replace(tzinfo=None)
     else:
         if not isinstance(observing_date, Date):
             observing_date = Date.fromisoformat(str(observing_date))

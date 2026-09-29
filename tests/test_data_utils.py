@@ -1,6 +1,6 @@
 """Download-message filtering and epoch lookup in camino.data_utils."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -78,3 +78,13 @@ def test_next_wfs_epoch_gives_up_after_max_tries(monkeypatch):
 
     with pytest.raises(LookupError, match="A, B"):
         next_wfs_epoch("2025-12-18", max_tries=2, verbose=False)
+
+
+def test_next_wfs_epoch_converts_aware_cutoff_to_utc(monkeypatch):
+    _fake_wss(monkeypatch, [("O2025122101", 1.0)], {"O2025122101"})
+    cutoff = datetime(2025, 12, 18, 20, tzinfo=timezone(timedelta(hours=-5)))
+
+    epoch = next_wfs_epoch(cutoff, verbose=False)
+
+    # 20:00 UTC-5 is 01:00 UTC on 19 Dec; the next OPD is a day after that.
+    assert epoch == datetime(2025, 12, 20, 1, 0)
