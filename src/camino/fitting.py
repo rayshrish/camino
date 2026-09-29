@@ -9,7 +9,7 @@ compare_with_mast(result, mast_wss_path): make the notebook comparison figure.
 
 Example (no previous OPD is required or loaded)::
 
-    from fitting import FitConfig, load_data, fit_data
+    from camino.fitting import FitConfig, load_data, fit_data
     config = FitConfig.for_mode("ptt_pixel", stage2_maxiter=6000)
     data = load_data("plus.fits", "minus.fits", pupil_path="pupil.fits",
                      filter_path="F212N.dat", config=config)
@@ -21,14 +21,16 @@ Example (no previous OPD is required or loaded)::
 Numerical conventions retained from the supplied notebooks
 ---------------------------------------------------------
 * pixel: 128-pixel detector cutouts, output flip on axis 1, scheduled
-  SGD of defocus/positions (150 steps), then illuminated-pixel L-BFGS-B.
+  SGD of defocus/positions (60 steps), then illuminated-pixel L-BFGS-B.
   QV is segment-wise on the piston-centred OPD in nm.
 * ptt_pixel: 256-pixel cutouts, pupil flip on axis 0; fixed defocus;
   BFGS positions, sequential 27-seed/local bounded L-BFGS-B per mirror,
   joint PTT BFGS, position refit, then joint PTT/pixel L-BFGS-B.
   QV, L2 and global-slope regularisation act on the pixel residual only.
-* Both propagate on a 512-pixel pupil and a 512*4 output field by default.
-  Detector cutout size is NOT the propagation field size.
+* Both propagate on a 512-pixel pupil. The output field defaults to the
+  detector cutout (psf_npixels = fit_npix, times oversample): the MFT
+  evaluates each output pixel independently, so a larger field only adds
+  pixels that render() crops away.
 * The ptt_pixel preset retains the notebook's actual fixed defocus values:
   +44010282.72 and -43542523.19 nm. They are editable configuration values,
   not universal instrument calibration constants.
@@ -37,9 +39,8 @@ Numerical conventions retained from the supplied notebooks
 * Pupil amplitude remains frozen; flux/background are solved analytically.
 * Continuation starts at the latest parameters with fresh L-BFGS memory.
 
-Dependencies: the user's camino.py and abcdlux_patch.py, JAX, Equinox, dLux,
-Optax, NumPy, SciPy, Astropy, scikit-image, Matplotlib and tqdm. This module
-also supports sibling camino/abcdlux_patch modules in a package. It does
+Dependencies: camino.core and camino.abcdlux_patch, JAX, Equinox, dLux,
+Optax, NumPy, SciPy, Astropy, scikit-image, Matplotlib and tqdm. It does
 not execute fits, read data or select a Matplotlib backend at import time.
 JAX float64 is enabled by load_data, as required by both source notebooks.
 The existing CAMINO throughput API needs a temporary module patch; calls
@@ -81,14 +82,10 @@ import jax.scipy as jsp
 import optax
 from jax import Array
 from skimage import measure
-from tqdm.auto import tqdm
+from tqdm import tqdm  # text bars also render in saved notebooks
 
-if __package__:
-    from . import camino as cam
-    from . import abcdlux_patch as abcdlux
-else:
-    import camino as cam
-    import abcdlux_patch as abcdlux
+from . import abcdlux_patch as abcdlux
+from . import core as cam
 
 onp = np
 EPS = 1e-30
@@ -146,13 +143,13 @@ class FitConfig:
     filter_name: str = "F212N"
     n_wavels: int = 1
     pupil_downsample_factor: int = 2
-    psf_npixels: int = 512
+    psf_npixels: int | None = None  # defaults to fit_npix
     oversample: int = 4
     pixel_scale: float = 0.031
     pixel_pitch: float = 18e-6
     diameter: float = 6.603464
     opd_phase_sign: float = -1.0
-    stage1_sgd_steps: int = 150
+    stage1_sgd_steps: int = 60
     # Order: defocus+, position+, defocus-, position-.
     sgd_learning_rates: tuple = (9e4, 8e-8, 9e4, 8e-8)
     sgd_start_steps: tuple = (0, 10, 15, 35)
@@ -196,6 +193,8 @@ class FitConfig:
         for key, value in defaults.items():
             if getattr(self, key) is None:
                 object.__setattr__(self, key, value)
+        if self.psf_npixels is None:
+            object.__setattr__(self, "psf_npixels", self.fit_npix)
         if self.orientation not in ("pupil_flip", "output_flip"):
             raise ValueError("Unknown optical orientation")
         for name in (
@@ -352,7 +351,7 @@ def _local_filter(filter_path, filter_name, fit_mode):
         else:
             # Preserve the PTT notebook's use of CAMINO's own throughput method.
             def local_throughput(filt, nwavels=1):
-                path = str(filter_path) if str(filt) == filter_name else filt
+                path = Path(filter_path) if str(filt) == filter_name else filt
                 return original_unwrapped(path, nwavels=nwavels)
 
         cam.calc_throughput = local_throughput
@@ -464,16 +463,18 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
             ABCD=abcd,
             mode="physical",
             strip_input=False,
+            output_phase=return_wf,
         )
 
         if self.orientation == "output_flip":
             u_out = jnp.flip(u_out, axis=0)
-        wf = dl.Wavefront(n_out, n_out * theta_pix, wavelength).set(
+        if not return_wf:
+            # PSF = |u|^2; avoids abs/angle and the output phase factors.
+            return u_out.real**2 + u_out.imag**2
+        return dl.Wavefront(n_out, n_out * theta_pix, wavelength).set(
             ["amplitude", "phase"],
             [jnp.abs(u_out), jnp.angle(u_out)],
         )
-
-        return wf if return_wf else wf.psf
 
 
 class NRCDetectorLong(dl.detectors.LayeredDetector):
@@ -710,20 +711,27 @@ def quadratic_variation_masked(image, mask):
 
 @partial(jax.jit, static_argnums=(2,))
 def segmentwise_qv(labeled_array, data, unique_labels):
+    """Sum of per-segment quadratic variation over unique_labels.
+
+    A neighbour pair contributes only when both pixels carry the same label
+    from unique_labels, so one masked difference replaces a per-segment stack.
+    """
     data = jnp.asarray(data, dtype=jnp.float64)
     labeled_array = jnp.asarray(labeled_array, dtype=jnp.int32)
+    in_set = jnp.isin(labeled_array, jnp.array(unique_labels, dtype=jnp.int32))
 
-    labels = jnp.array(unique_labels)[:, None, None]
-    masks = labeled_array[None, :, :] == labels
-    masks_f = masks.astype(jnp.float64)
+    def same_segment(lo, hi, ok_lo, ok_hi):
+        return ((lo == hi) & ok_lo & ok_hi).astype(jnp.float64)
 
-    seg_data = data[None, :, :] * masks_f
-
-    def one_segment(seg, seg_mask):
-        return quadratic_variation_masked(seg, seg_mask)
-
-    vals = jax.vmap(one_segment)(seg_data, masks_f)
-    return jnp.sum(vals)
+    dx = data[1:, :] - data[:-1, :]
+    mx = same_segment(
+        labeled_array[1:, :], labeled_array[:-1, :], in_set[1:, :], in_set[:-1, :]
+    )
+    dy = data[:, 1:] - data[:, :-1]
+    my = same_segment(
+        labeled_array[:, 1:], labeled_array[:, :-1], in_set[:, 1:], in_set[:, :-1]
+    )
+    return jnp.sum((dx * mx) ** 2) + jnp.sum((dy * my) ** 2)
 
 
 def good_bad_boundary_mix_nm(x_nm, good_mask, bad_mask):
@@ -993,10 +1001,10 @@ def load_data(
     from importlib.resources import files
 
     if pupil_path is None:
-        pupil_path = files("camino_data") / "jwst_pupil_flight_npix1024.fits"
+        pupil_path = files("camino").joinpath("data", "jwst_pupil_flight_npix1024.fits")
 
     if filter_path is None:
-        filter_path = files("camino_data") / "F212N.dat"
+        filter_path = files("camino").joinpath("data", "F212N.dat")
 
     c = _resolve_config(fit_mode, config)
     paths = {
@@ -1148,8 +1156,10 @@ def _run_optimizer(
             history.max_abs_grads.append(float(np.max(np.abs(grad))))
             if record is not None:
                 record(history, np.asarray(x))
+            bar.set_postfix(
+                loss=f"{value:.6e}", grad=f"{np.linalg.norm(grad):.3e}", refresh=False
+            )
             bar.update(1)
-            bar.set_postfix(loss=f"{value:.6e}", grad=f"{np.linalg.norm(grad):.3e}")
 
         result = spo.minimize(
             fun,
@@ -1160,6 +1170,9 @@ def _run_optimizer(
             callback=callback,
             options=options,
         )
+        # maxiter is a budget; show a finished bar when the run stops early.
+        bar.total = bar.n
+        bar.refresh()
     history.result = result
     history.elapsed_seconds = time.perf_counter() - start
     print(f"{name}: {result.message}; iterations={result.nit}, loss={result.fun:.8e}")
@@ -1245,17 +1258,28 @@ def _run_pixel_initial_stage(problem, histories):
     optimizer = optax.multi_transform(transforms, labels)
     state = optimizer.init(params)
     # OPD is zero and frozen, so the source's stage-1 L1/shear terms are zero.
-    evaluate = jax.jit(jax.value_and_grad(problem.data_loss))
+    evaluate = jax.value_and_grad(problem.data_loss)
+
+    @jax.jit
+    def step(params, state):
+        value, grads = evaluate(params)
+        updates, state = optimizer.update(grads, state, params=params)
+        return (
+            value,
+            grad_global_norm(grads),
+            optax.apply_updates(params, updates),
+            state,
+        )
+
     h = StageHistory("Stage 1 — SGD defocus and positions", "SGD")
     histories.append(h)
     started = time.perf_counter()
-    h.initial_loss = float(evaluate(params)[0])
+    h.initial_loss = float(step(params, state)[0])  # reuses the compiled step
     with tqdm(total=c.stage1_sgd_steps, desc=h.name, disable=not c.progress) as bar:
         for _ in range(c.stage1_sgd_steps):
-            value, grads = evaluate(params)
-            updates, state = optimizer.update(grads, state, params=params)
+            value, grad_norm, new_params, state = step(params, state)
             h.losses.append(float(value))
-            h.grad_norms.append(float(grad_global_norm(grads)))
+            h.grad_norms.append(float(grad_norm))
             # These histories correspond to the pre-update loss, as in the source.
             h.parameter_history.append(
                 np.concatenate(
@@ -1270,9 +1294,9 @@ def _run_pixel_initial_stage(problem, histories):
                     ]
                 )
             )
-            params = optax.apply_updates(params, updates)
+            params = new_params
+            bar.set_postfix(loss=f"{float(value):.6e}", refresh=False)
             bar.update(1)
-            bar.set_postfix(loss=f"{float(value):.6e}")
     h.elapsed_seconds = time.perf_counter() - started
     if c.show_plots:
         h.plot()
@@ -1347,7 +1371,7 @@ def _run_ptt_initial_stages(problem, histories, output_dir):
                     value = float(seed_loss(jnp.asarray(trial)))
                     if value < best_loss:
                         best_loss, best_seed = value, np.asarray(seed).copy()
-                    bar.set_postfix(best=f"{best_loss:.6e}")
+                    bar.set_postfix(best=f"{best_loss:.6e}", refresh=False)
             if not np.isfinite(best_loss):
                 raise FloatingPointError(
                     f"No finite PTT seed for physical segment {physical_id}"
@@ -1406,25 +1430,48 @@ def _run_ptt_initial_stages(problem, histories, output_dir):
     return params
 
 
+def make_mask_embed(mask):
+    """Return embed(x): scatter a vector into the True pixels of a 2-D mask.
+
+    Equivalent to zeros(mask.shape).at[mask].set(x), but written as a gather
+    with a gather as its transpose: on CPU, XLA lowers scatter (and the JVP of
+    a non-unique scatter) to a serial loop over every element.
+    """
+    mask = np.asarray(mask, dtype=bool)
+    flat = np.flatnonzero(mask)
+    # Index into [x, 0]: masked pixels read their entry, the rest read the 0.
+    source = np.full(mask.size, flat.size)
+    source[flat] = np.arange(flat.size)
+
+    @jax.custom_vjp
+    def embed(x):
+        return jnp.append(x, jnp.zeros((), x.dtype))[source].reshape(mask.shape)
+
+    def embed_bwd(_, g):
+        return (g.ravel()[flat],)
+
+    embed.defvjp(lambda x: (embed(x), None), embed_bwd)
+    return embed
+
+
 def _make_final_objective(problem, base_params):
     """Return the stage-2 vector, unpacker and compiled objective."""
     mask = problem.mirror_mask
     n_pixels = int(np.asarray(mask).sum())
+    embed = make_mask_embed(mask)
     base = dict(base_params)
     if problem.config.fit_mode == "pixel":
         x0 = np.asarray(base["aberrations_shared"])[np.asarray(mask)] * 1e9
 
         def unpack(x):
-            pixel = jnp.zeros_like(mask, dtype=jnp.float64).at[mask].set(x)
+            pixel = embed(jnp.asarray(x, dtype=jnp.float64))
             return {**base, "aberrations_shared": pixel * 1e-9}
 
     else:
         x0 = np.concatenate([np.asarray(base["bad_plane_nm"]), np.zeros(n_pixels)])
 
         def unpack(x):
-            pixel = (
-                jnp.zeros_like(mask, dtype=jnp.float64).at[mask].set(x[problem.n_ptt :])
-            )
+            pixel = embed(jnp.asarray(x[problem.n_ptt :], dtype=jnp.float64))
             return problem.with_ptt(base, x[: problem.n_ptt], pixel)
 
     evaluate = jax.jit(jax.value_and_grad(lambda x: problem.loss(unpack(x))))
@@ -1749,22 +1796,23 @@ def continue_fit(result, maxiter=2000):
     return result
 
 
-def get_mast_wss_path(date, choice="closest"):
-    """Resolve the official WSS product using the notebook's WebbPSF API.
+def get_mast_wss_path(date, choice="closest", verbose=True):
+    """Resolve the official WSS product using the stpsf (formerly WebbPSF) API.
 
-    Optional dependency: webbpsf and its reference data. Network access may
-    be used by WebbPSF. A local WSS path can instead be passed directly to
-    compare_with_mast, with no lookup required.
+    Requires stpsf's reference data. Network access may be used by stpsf. A local WSS path can instead be passed directly to
+    compare_with_mast, with no lookup required. verbose prints stpsf's OPD
+    query summary; download messages (which show local paths) are hidden.
     """
-    import webbpsf
+    import stpsf
 
-    filename = webbpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=True)
+    from .data_utils import hide_download_messages
+
+    with hide_download_messages():
+        filename = stpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=verbose)
     direct = Path(filename).expanduser()
     if direct.is_file():
         return direct
-    path = (
-        Path(webbpsf.utils.get_webbpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
-    )
+    path = Path(stpsf.utils.get_stpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
     if not path.is_file():
         raise FileNotFoundError(f"WSS product was identified but is not cached: {path}")
     return path

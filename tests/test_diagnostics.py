@@ -57,10 +57,19 @@ def test_pixel_anisotropy_default_order_applies():
     assert bool(jnp.isfinite(out.data).all())
 
 
-@pytest.mark.parametrize("order", [2, 3, -1])
+@pytest.mark.parametrize("order", [2, 4, -1])
 def test_pixel_anisotropy_rejects_unsupported_order(order):
     with pytest.raises(ValueError, match="order 0"):
         camino.PixelAnisotropy(order=order)
+
+
+def test_pixel_anisotropy_cubic_order_applies():
+    psf = dl.PSF(jnp.ones((8, 8), dtype=jnp.float64), pixel_scale=1.0)
+
+    out = camino.PixelAnisotropy(order=3).apply(psf)
+
+    assert out.data.shape == (8, 8)
+    assert bool(jnp.isfinite(out.data).all())
 
 
 def test_check_poly_vs_mono_reports_mono_when_param_missing():
@@ -79,7 +88,7 @@ def test_check_poly_vs_mono_can_plot(monkeypatch):
     parent.pyplot = stub
     monkeypatch.setitem(sys.modules, "matplotlib", parent)
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", stub)
-    monkeypatch.setattr(camino, "calc_throughput", _fake_throughput)
+    monkeypatch.setattr(camino.core, "calc_throughput", _fake_throughput)
 
     result = camino.check_poly_vs_mono(
         _CoeffModel([0.0, 1.0]), _SpectrumExposure(), nw=8, plot=True, label="test"
@@ -153,10 +162,10 @@ def test_check_convergence_uses_the_injected_params(monkeypatch):
         assert params is base
         return injected
 
-    monkeypatch.setattr(camino, "inject_views_for_pupil", _fake_inject_views)
-    monkeypatch.setattr(camino, "SinglePointFilterFit", _Fit)
+    monkeypatch.setattr(camino.core, "inject_views_for_pupil", _fake_inject_views)
+    monkeypatch.setattr(camino.core, "SinglePointFilterFit", _Fit)
     monkeypatch.setattr(
-        camino, "exposure_from_defocus_file", lambda fname, fit: _Exposure(fit)
+        camino.core, "exposure_from_defocus_file", lambda fname, fit: _Exposure(fit)
     )
 
     results, images = camino.check_convergence_from_file(

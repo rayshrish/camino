@@ -149,6 +149,12 @@ MODULE_GROUPS = {
     ],
 }
 
+# Docs group -> importable module documented under that group.
+MODULE_PATHS = {
+    "camino": "camino.core",
+    "abcdlux_patch": "camino.abcdlux_patch",
+}
+
 TITLE_MAP = {
     "camino": "CAMINO API",
     "abcdlux_patch": "ABCDLux patch API",
@@ -239,7 +245,8 @@ def main() -> None:
         module_dir = API_ROOT / module_name
         module_dir.mkdir(parents=True, exist_ok=True)
 
-        source_path = ROOT / f"{module_name}.py"
+        dotted = MODULE_PATHS[module_name]
+        source_path = ROOT / "src" / Path(*dotted.split(".")).with_suffix(".py")
         source_symbols = parse_public_symbols(source_path)
 
         for page_name, expected_symbols in entries:
@@ -254,9 +261,7 @@ def main() -> None:
 
             md_path = module_dir / f"{page_name}.md"
             md_path.write_text(
-                render_page(
-                    page_name.replace("_", " ").title(), f"{module_name}", valid
-                ),
+                render_page(page_name.replace("_", " ").title(), dotted, valid),
                 encoding="utf-8",
             )
 

@@ -7,7 +7,7 @@ This module condenses the workflow from:
 
 Public usage
 ------------
-from wlp8_wlm8_download import download_wlp8_wlm8
+from camino.data_utils import download_wlp8_wlm8
 
 wlp8_path, wlm8_path = download_wlp8_wlm8("2022-07-13")
 
@@ -20,8 +20,11 @@ astroquery
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import sys
+from contextlib import contextmanager, redirect_stdout
 from datetime import date as Date
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -31,8 +34,28 @@ import stpsf
 from astropy.io import fits
 from astroquery.mast import MastMissions
 
-
 _MAST = MastMissions(mission="jwst")
+
+
+@contextmanager
+def hide_download_messages():
+    """Suppress astroquery's "Downloading URL ... to <local path>" lines.
+
+    astroquery prints these for every download, regardless of the caller's
+    verbose flag, and they expose local paths. Other output passes through.
+    """
+    buffer = io.StringIO()
+    try:
+        with redirect_stdout(buffer):
+            yield
+    finally:
+        sys.stdout.write(
+            "".join(
+                line
+                for line in buffer.getvalue().splitlines(keepends=True)
+                if not line.lstrip().startswith("Downloading URL")
+            )
+        )
 
 
 def _opd_obsid_to_jw_stem(obs_id: str) -> str:
@@ -78,10 +101,11 @@ def _metadata_from_time(dt_utc: datetime, verbose: bool = False) -> dict[str, st
     if dt_utc.tzinfo is not None:
         dt_utc = dt_utc.astimezone(timezone.utc).replace(tzinfo=None)
 
-    opd_path = stpsf.mast_wss.get_opd_at_time(
-        dt_utc,
-        verbose=verbose,
-    )
+    with hide_download_messages():
+        opd_path = stpsf.mast_wss.get_opd_at_time(
+            dt_utc,
+            verbose=verbose,
+        )
 
     try:
         with fits.open(opd_path) as hdul:
@@ -213,13 +237,14 @@ def _download_product(
 
     if outpath.exists():
         if verbose:
-            print("Already exists:", outpath)
+            print("Already exists:", filename)
         return outpath
 
     if verbose:
         print("Downloading:", filename)
 
-    _MAST.download_file(uri, local_path=str(outpath))
+    with hide_download_messages():
+        _MAST.download_file(uri, local_path=str(outpath))
 
     if not outpath.exists():
         raise RuntimeError(f"MAST download did not create {outpath}")

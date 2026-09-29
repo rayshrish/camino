@@ -1,35 +1,48 @@
-# camino: Computational Aberration Modelling and Inference for NIRCam Observations
-from __future__ import annotations
+"""Core implementation for CAMINO.
 
-print("Loading camino module...")
+This module contains the public optics, fitting, and JWST/NIRCam analysis helpers
+used by the project. The imports are grouped into standard-library, third-party,
+and local modules for readability.
+"""
 
-
-### Basic imports
-###############################################################################
-plot_flag = 0
-
-from jax import Array
-
-import jax
-
-jax.config.update("jax_enable_x64", True)
-import astropy.io.fits as fits
-
+import functools
+import glob
+import os
+import re
+import time
+import warnings
+from abc import abstractmethod
+from dataclasses import dataclass
 from importlib.resources import files
+from pathlib import Path
+from typing import Any
+
+import astropy.io.fits as fits
+import equinox as eqx
+import jax
+import jax.nn as jnn
+import jax.numpy as jnp
+import jax.scipy as jsp
+import numpy as np
+import numpy as onp
+import pandas as pd
+import zodiax as zdx
+from jax import Array, lax
+from jax.flatten_util import ravel_pytree
+from jax.scipy.ndimage import map_coordinates
+from scipy.ndimage import center_of_mass, gaussian_filter
 
 import dLux as dl
+import dLux.utils as dlu
+from dLux.layers.optical_layers import OpticalLayer
 
+jax.config.update("jax_enable_x64", True)
+
+plot_flag = 0
 if plot_flag == 1:
     import matplotlib.pyplot as plt
-    from matplotlib import colormaps, colors
+    from matplotlib import colormaps
 
-from jax.flatten_util import ravel_pytree
-from importlib.resources import files
-
-import pandas as pd
-
-# matplotlib inline
-if plot_flag == 1:
     plt.rcParams["image.cmap"] = "inferno"
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["image.origin"] = "lower"
@@ -39,21 +52,55 @@ if plot_flag == 1:
     inferno.set_bad("k", 0.5)
     seismic.set_bad("k", 0.5)
 
-import jax.numpy as jnp
-from jax.scipy.ndimage import map_coordinates
-
-import dLux.utils as dlu
-
-from scipy.ndimage import gaussian_filter, shift as ndi_shift, center_of_mass
-
-import re
-import os
-import time
-import glob
-import numpy as onp
-from astropy.io import fits
-
-from functools import partial
+__all__ = [
+    "apply_shear",
+    "apply_pupil_shear",
+    "eval_poly_log10",
+    "radial_zoom",
+    "apply_pupil_curvature",
+    "gaussian_blur_fft",
+    "extract_cutout",
+    "estimate_center",
+    "cutout_around_defocused_psf_multi",
+    "cutout_around_defocused_psf",
+    "arr2pix",
+    "pix2arr",
+    "map_coordinates_2d",
+    "Rotate",
+    "JWSTPrimary",
+    "ApplySensitivities",
+    "PixelAnisotropy",
+    "NIRCamExposure",
+    "exposure_from_defocus_file",
+    "get_pupil",
+    "get_filter_test",
+    "calc_throughput",
+    "NonNormalisedClippedPolySpectrum",
+    "ModelFit",
+    "SinglePointFilterFit",
+    "BaseModeller",
+    "ModelParams",
+    "set_array",
+    "transfer_fn",
+    "transfer",
+    "plane_to_plane",
+    "err_poisson_dn",
+    "check_convergence_from_file",
+    "check_poly_vs_mono",
+    "weights_used_by_fit",
+    "is_curve_not_flat",
+    "fft_log",
+    "solve_flux_bg_weighted_jax_nansafe",
+    "inject_into_model",
+    "inject_views_for_pupil",
+    "scale_poisson_no_bg",
+    "scale_ls_const_bg_unweighted",
+    "make_gaussian_kernel1d",
+    "separable_gaussian_blur_reflect",
+    "gaussian_smooth_nan_jax_static",
+    "tv_norm",
+    "l2_smooth",
+]
 
 ###############################################################################
 
@@ -244,10 +291,7 @@ def _get_pupil_keyword(cal_fits_path: str):
 
 
 def _stage(msg: str, tprev: float | None):
-    """
-    Print stage header + timing since previous stage.
-    Returns new timestamp.
-    """
+    """Print a stage header plus timing since the previous stage; return a new timestamp."""
     now = time.perf_counter()
     if tprev is None:
         print(f"\n== {msg} ==")
@@ -256,8 +300,24 @@ def _stage(msg: str, tprev: float | None):
     return now
 
 
-import numpy as onp
-from scipy.ndimage import gaussian_filter, center_of_mass
+def _find_existing_cals(download_dir: str, want_prefix: str, det_tag: str | None):
+    """
+    Search download_dir recursively for already-present *_cal.fits matching
+    the visit prefix (want_prefix), and optionally detector token.
+    Returns list of file paths.
+    """
+    # Search recursively; astroquery writes into mastDownload/... so this is safest.
+    pattern = os.path.join(
+        os.path.abspath(download_dir), "**", f"{want_prefix}*_cal.fits"
+    )
+    hits = glob.glob(pattern, recursive=True)
+
+    if det_tag:
+        det_hits = [p for p in hits if f"_{det_tag}_" in os.path.basename(p)]
+        if det_hits:
+            hits = det_hits
+
+    return sorted(set(hits))
 
 
 def extract_cutout(img, center, size, fill_value=None):
@@ -276,10 +336,12 @@ def extract_cutout(img, center, size, fill_value=None):
     img = onp.asarray(img)
     y0, x0 = center
     y0i, x0i = int(round(y0)), int(round(x0))
-    half = size // 2
+    # Asymmetric halves so odd sizes still return exactly `size` pixels.
+    half_lo = size // 2
+    half_hi = size - half_lo
 
-    y1, y2 = y0i - half, y0i + half
-    x1, x2 = x0i - half, x0i + half
+    y1, y2 = y0i - half_lo, y0i + half_hi
+    x1, x2 = x0i - half_lo, x0i + half_hi
 
     if fill_value is None:
         fill_value = onp.nanmedian(img)
@@ -427,9 +489,11 @@ def cutout_around_defocused_psf(img, size=128, smooth_sigma=2.0, thresh_sigma=5.
     # Integer center for cutout indexing
     y0i, x0i = int(round(y0)), int(round(x0))
 
-    half = size // 2
-    y1, y2 = y0i - half, y0i + half
-    x1, x2 = x0i - half, x0i + half
+    # Asymmetric halves so odd sizes still return exactly `size` pixels.
+    half_lo = size // 2
+    half_hi = size - half_lo
+    y1, y2 = y0i - half_lo, y0i + half_hi
+    x1, x2 = x0i - half_lo, x0i + half_hi
 
     # Pad if near edges
     pad_y1 = max(0, -y1)
@@ -454,222 +518,15 @@ def cutout_around_defocused_psf(img, size=128, smooth_sigma=2.0, thresh_sigma=5.
     return cut, (y0, x0)
 
 
-def estimate_best_isolated_center(
-    img,
-    smooth_sigma=3.0,
-    thresh_sigma=5.0,
-    aperture_radius=40,
-    annulus_inner=70,
-    annulus_outer=140,
-    min_edge_dist=150,
-    min_neighbor_dist=250,
-    min_area=20,
-    max_candidates=100,
-    return_table=False,
-):
-    """
-    First-pass source selector:
-    pick a bright, isolated, non-edge source rather than simply the brightest source.
-
-    Returns
-    -------
-    (y, x) or ((y, x), table)
-    """
-    img = np.asarray(img)
-
-    med, sig = robust_bg_sigma(img)
-    work = img - med
-    smooth = gaussian_filter(work, smooth_sigma)
-
-    threshold = thresh_sigma * sig
-    mask = np.isfinite(smooth) & (smooth > threshold)
-
-    lab, nlab = label(mask)
-
-    candidates = []
-
-    ny, nx = img.shape
-
-    for lab_id in range(1, nlab + 1):
-        pix = lab == lab_id
-        area = np.sum(pix)
-
-        if area < min_area:
-            continue
-
-        # centroid on smoothed thresholded region
-        yc, xc = center_of_mass(smooth, labels=lab, index=lab_id)
-
-        if not np.isfinite(yc) or not np.isfinite(xc):
-            continue
-
-        # edge rejection
-        dist_edge = min(yc, xc, ny - 1 - yc, nx - 1 - xc)
-        if dist_edge < min_edge_dist:
-            continue
-
-        inner = aperture_sum(work, yc, xc, aperture_radius)
-        ann = annulus_sum(work, yc, xc, annulus_inner, annulus_outer)
-
-        peak = np.nanmax(img[pix])
-
-        # avoid negative weird annulus values causing nonsense
-        ann_pos = max(ann, 1e-12)
-
-        isolation = inner / ann_pos
-        snr_like = inner / (sig * np.sqrt(np.pi * aperture_radius**2))
-
-        # simple first-pass score
-        # high inner flux is good, high annulus flux is bad
-        score = snr_like
-
-        candidates.append(
-            {
-                "y": yc,
-                "x": xc,
-                "area": area,
-                "peak": peak,
-                "inner_flux": inner,
-                "annulus_flux": ann,
-                "isolation": isolation,
-                "snr_like": snr_like,
-                "score": score,
-                "dist_edge": dist_edge,
-            }
-        )
-
-    coords = np.array([[c["y"], c["x"]] for c in candidates])
-
-    for i, c in enumerate(candidates):
-        d = np.sqrt((coords[:, 0] - c["y"]) ** 2 + (coords[:, 1] - c["x"]) ** 2)
-        d[i] = np.inf
-        c["nearest_neighbor_dist"] = np.min(d)
-
-    min_neighbor_dist = 250  # pixels; try 200–300
-
-    candidates = [
-        c for c in candidates if c["nearest_neighbor_dist"] > min_neighbor_dist
-    ]
-
-    if len(candidates) == 0:
-        raise RuntimeError("No valid isolated source candidates found.")
-
-    # keep only strongest candidates before sorting, mostly for debugging sanity
-    candidates = sorted(candidates, key=lambda c: c["snr_like"], reverse=True)
-    best = candidates[0]
-
-    if return_table:
-        return (best["y"], best["x"]), candidates
-
-    return best["y"], best["x"]
-
-
-def cutout_around_defocused_psf_multi_isolated(
-    img,
-    size=128,
-    recenter_sizes=(1024, 512, 256),
-    smooth_sigma=2.0,
-    thresh_sigma=5.0,
-    use_isolated_initial=True,
-    min_neighbor_dist=250,
-    min_edge_dist=150,
-    return_history=False,
-):
-    """
-    Multiscale centering for a defocused PSF, followed by one final extraction.
-
-    Initial full-frame selection can use an isolated-source selector to avoid
-    choosing crowded bright PSFs.
-    """
-    img = onp.asarray(img)
-
-    # Initial estimate on full frame
-    if use_isolated_initial:
-        y, x = estimate_best_isolated_center(
-            img,
-            smooth_sigma=smooth_sigma,
-            thresh_sigma=thresh_sigma,
-            min_neighbor_dist=min_neighbor_dist,
-            min_edge_dist=min_edge_dist,
-        )
-        history = [("full_best_isolated", img.shape, (y, x))]
-    else:
-        y, x = estimate_center(
-            img,
-            smooth_sigma=smooth_sigma,
-            thresh_sigma=thresh_sigma,
-        )
-        history = [("full_brightest", img.shape, (y, x))]
-
-    # Recenter only while shrinking
-    for rec_size in recenter_sizes:
-        cut, (y1, x1) = extract_cutout(img, (y, x), rec_size)
-
-        yc, xc = estimate_center(
-            cut,
-            smooth_sigma=smooth_sigma,
-            thresh_sigma=thresh_sigma,
-        )
-
-        y, x = y1 + yc, x1 + xc
-        history.append((rec_size, cut.shape, (y, x)))
-
-    # Final extraction only
-    final_cut, _ = extract_cutout(img, (y, x), size)
-
-    if return_history:
-        return final_cut, (y, x), history
-
-    return final_cut, (y, x)
-
-
-def _find_existing_cals(download_dir: str, want_prefix: str, det_tag: str | None):
-    """
-    Search download_dir recursively for already-present *_cal.fits matching
-    the visit prefix (want_prefix), and optionally detector token.
-    Returns list of file paths.
-    """
-    # Search recursively; astroquery writes into mastDownload/... so this is safest.
-    pattern = os.path.join(
-        os.path.abspath(download_dir), "**", f"{want_prefix}*_cal.fits"
-    )
-    hits = glob.glob(pattern, recursive=True)
-
-    if det_tag:
-        det_hits = [p for p in hits if f"_{det_tag}_" in os.path.basename(p)]
-        if det_hits:
-            hits = det_hits
-
-    # de-dupe, keep stable order
-    hits = sorted(set(hits))
-    return hits
-
-
-def transfer_fn_old(coords, npixels, wavelength, pscale, distance):
-    scaling = npixels * pscale**2
-    rho_sq = ((coords / scaling) ** 2).sum(0)
-    return _fftshift(jnp.exp(-1.0j * jnp.pi * wavelength * distance * rho_sq))
-
-
-def transfer_fn_patched(coords, npixels, wavelength, pscale, distance):
-    """
-    Minimal fix: treat coords/scaling as angular frequency (rad/m) and convert
-    to cycles/m by dividing by (2π)^2 in the quadratic phase.
-    This brings 'distance' much closer to true meters.
-    """
-    scaling = npixels * pscale**2
-    rho_sq = ((coords / scaling) ** 2).sum(0)  # ~ rad^2 / m^2 (effective)
-    rho_sq_cycles = rho_sq / (2.0 * jnp.pi) ** 2  # convert to (cycles/m)^2
-    return _fftshift(jnp.exp(-1.0j * jnp.pi * wavelength * distance * rho_sq_cycles))
-
-
 def transfer_fn(coords, npixels, wavelength, pscale, distance):
+    """Evaluate the active Fourier-domain transfer kernel used for the current propagation model."""
+    del npixels, pscale
     rho_sq = (coords**2).sum(0)
     return _fftshift(jnp.exp(-1.0j * jnp.pi * wavelength * distance * rho_sq))
 
 
 def transfer(wf, distance, pad=2):
-    # coords = dlu.pixel_coords(pad * wf.npixels, pad * wf.diameter)
+    """Build a transfer kernel for propagation from one plane to another."""
     npix = pad * wf.npixels
     diam = pad * wf.diameter
     freqs = jnp.fft.fftshift(jnp.fft.fftfreq(npix, diam / npix))
@@ -677,24 +534,28 @@ def transfer(wf, distance, pad=2):
     return transfer_fn(
         coords, wf.npixels, wf.wavelength, pad * wf.pixel_scale, distance
     )
-    # return transfer_fn_patched(coords, wf.npixels, wf.wavelength, pad * wf.pixel_scale, distance)
 
 
 def _fft(phasor, pad=2):
+    """FFT a phasor after zero-padding to the requested sampling factor."""
     padded = dlu.resize(phasor, phasor.shape[0] * pad)
     return 1 / padded.shape[0] * jnp.fft.fft2(padded)
 
 
 def _ifft(phasor, pad=1):
-    padded = dlu.resize(phasor, phasor.shape[0] * pad)
+    """Inverse FFT with an optional resize back to the input plane size."""
+    del pad
+    padded = dlu.resize(phasor, phasor.shape[0])
     return phasor.shape[0] * jnp.fft.ifft2(padded)
 
 
 def _fftshift(phasor):
+    """Convenience wrapper around the FFT shift operation."""
     return jnp.fft.fftshift(phasor)
 
 
 def plane_to_plane(wf, distance, pad=2):
+    """Propagate a wavefront between planes using the current transfer kernel."""
     fft_wf = _fft(wf.phasor, pad=pad)
     tf = transfer(wf, distance, pad=pad)
     phasor = dlu.resize(_ifft(fft_wf * tf), wf.npixels)
@@ -747,22 +608,6 @@ def err_poisson_dn(
     return sigma_dn
 
 
-import equinox as eqx
-import zodiax as zdx
-
-from dLux.layers.optical_layers import OpticalLayer
-
-from dataclasses import dataclass
-from typing import Any, Optional, Union
-
-import jax
-import jax.numpy as jnp
-from jax.scipy.ndimage import map_coordinates
-
-
-Array = jax.Array
-
-
 @dataclass
 class Rotate:
     """
@@ -785,7 +630,8 @@ class Rotate:
         """Return coords shaped (2, n, n), centered, spanning `diameter` with pixel-center sampling."""
         step = self.diameter / n
         start = -self.diameter / 2.0 + step / 2.0
-        grid_1d = start + step * jnp.arange(n, dtype=jnp.float32)
+        dtype = jnp.result_type(jnp.asarray(self.diameter), jnp.float64)
+        grid_1d = start + step * jnp.arange(n, dtype=dtype)
         # indexing="ij": first axis varies along rows (axis0), second along cols (axis1)
         x, y = jnp.meshgrid(grid_1d, grid_1d, indexing="ij")
         return jnp.stack([x, y], axis=0)
@@ -823,13 +669,13 @@ class Rotate:
             raise ValueError(f"Rotate expects a square 2D array, got shape={img.shape}")
 
         n = img.shape[0]
-        angle = jnp.deg2rad(jnp.asarray(self.rotation_deg, dtype=jnp.float32))
+        dtype = jnp.result_type(img, jnp.float64)
+        angle = jnp.deg2rad(jnp.asarray(self.rotation_deg, dtype=dtype))
 
         coords = self._coords_centered_physical(n)  # (2,n,n) physical
         rot_coords = self._rotate_coords(coords, angle)  # (2,n,n) physical
         sample_coords = (
-            rot_coords
-            * jnp.array([1.0, self.anisotropy], dtype=jnp.float32)[:, None, None]
+            rot_coords * jnp.asarray([1.0, self.anisotropy], dtype=dtype)[:, None, None]
         )
 
         # map_coordinates wants coordinates in index space, shape (ndim, ...)
@@ -883,9 +729,9 @@ class JWSTPrimary(dl.Optic):
         super().__init__(transmission=transmission, opd=opd, normalise=True)
 
     def apply(self, wavefront):
-        # Apply transmission and normalise
+        # Apply transmission and normalise while keeping everything in JAX.
         amplitude = wavefront.amplitude * self.transmission
-        amplitude /= np.linalg.norm(amplitude)
+        amplitude /= jnp.linalg.norm(amplitude)
 
         # Apply phase
         phase = wavefront.phase + wavefront.wavenumber * self.opd
@@ -904,12 +750,6 @@ def pix2arr(coords, pscale=1):
     n = coords.shape[-1]
     shift = (n - 1) / 2
     return (coords / pscale) + shift
-
-
-import jax
-import jax.numpy as jnp
-
-Array = jax.Array
 
 
 def map_coordinates_2d(
@@ -962,9 +802,9 @@ def map_coordinates_2d(
 
     def sample(rr, cc):
         valid = (rr >= 0) & (rr < H) & (cc >= 0) & (cc < W)
-        rr_clip = jnp.clip(rr, 0, H - 1)
-        cc_clip = jnp.clip(cc, 0, W - 1)
-        val = img[rr_clip, cc_clip]
+        rr = jnp.clip(rr, 0, H - 1)
+        cc = jnp.clip(cc, 0, W - 1)
+        val = img[rr, cc]
         return jnp.where(valid, val, cval_arr)
 
     if order == 0:
@@ -987,9 +827,9 @@ def map_coordinates_2d(
         v01 = sample(r0, c1)
         v11 = sample(r1, c1)
 
-        w00 = (1.0 - dr) * (1.0 - dc)
-        w10 = dr * (1.0 - dc)
-        w01 = (1.0 - dr) * dc
+        w00 = (1 - dr) * (1 - dc)
+        w10 = dr * (1 - dc)
+        w01 = (1 - dr) * dc
         w11 = dr * dc
 
         out = w00 * v00 + w10 * v10 + w01 * v01 + w11 * v11
@@ -1005,11 +845,7 @@ def map_coordinates_2d(
         inner = (a + 2.0) * ax3 - (a + 3.0) * ax2 + 1.0
         outer = a * ax3 - 5.0 * a * ax2 + 8.0 * a * ax - 4.0 * a
 
-        return jnp.where(
-            ax <= 1.0,
-            inner,
-            jnp.where(ax < 2.0, outer, 0.0),
-        )
+        return jnp.where(ax <= 1.0, inner, jnp.where(ax < 2.0, outer, 0.0))
 
     offsets = (-1, 0, 1, 2)
     out = jnp.zeros_like(r, dtype=img.dtype)
@@ -1054,57 +890,45 @@ class PixelAnisotropy(dl.layers.detector_layers.DetectorLayer):
     transform: dl.CoordTransform
     order: int
 
-    def __init__(self, order=3):
-        order = int(order)
-        if order not in (0, 1, 3):
+    def __init__(self, order=1):
+        if int(order) not in (0, 1, 3):
             raise ValueError(
-                "PixelAnisotropy supports order 0 (nearest), "
-                "1 (linear), or 3 (cubic), "
-                f"got {order}."
+                "PixelAnisotropy supports order 0 (nearest), 1 (linear) "
+                f"or 3 (cubic), got {order}."
             )
-
-        self.transform = dl.CoordTransform(compression=np.ones(2))
-        self.order = order
+        self.transform = dl.CoordTransform(compression=jnp.ones(2, dtype=jnp.float64))
+        self.order = int(order)
 
     def __getattr__(self, key):
         if hasattr(self.transform, key):
             return getattr(self.transform, key)
         raise AttributeError(f"PixelAnisotropy has no attribute {key}")
 
-    def __call__(self, PSF):
-        return self.apply(PSF)
+    def __call__(self, x):
+        return self.apply(x)
 
     def apply(self, PSF):
         npix = PSF.data.shape[0]
         transformed = self.transform.apply(
             dlu.pixel_coords(npix, npix * PSF.pixel_scale)
         )
-        coords = np.roll(
-            pix2arr(transformed, PSF.pixel_scale),
-            1,
-            axis=0,
+        coords = jnp.roll(pix2arr(transformed, PSF.pixel_scale), 1, axis=0)
+        interp_fn = lambda x: map_coordinates_2d(
+            x, coords, order=self.order, mode="constant", cval=0.0
         )
-
-        data = map_coordinates_2d(
-            PSF.data,
-            coords,
-            order=self.order,
-            mode="constant",
-            cval=0.0,
-        )
-        return PSF.set("data", data)
+        return PSF.set("data", interp_fn(PSF.data))
 
 
 class NIRCamExposure(zdx.Base):
     filename: str = eqx.field(static=True)
     target: str = eqx.field(static=True)
     filter: str = eqx.field(static=True)
-    mjd: str = eqx.field(static=True)
+    mjd: float | None = eqx.field(static=True)
     data: Array
     err: Array
     bad: Array
 
-    fit: object = eqx.field(static=True)
+    fit: object  # a ModelFit; not static because its source holds JAX arrays
 
     def __init__(self, filename, name, filter, data, mjd, err, fit, bad):
         """
@@ -1142,11 +966,11 @@ class NIRCamExposure(zdx.Base):
 
 
 def exposure_from_defocus_file(fname, fit, threshold=12000, crop=128):
+    """Construct a NIRCam exposure object from a defocused FITS file."""
     with fits.open(fname) as hdul:
         sci = hdul["SCI"].data
         err_im = hdul["ERR"].data
 
-        # Multiscale center on SCI, final extraction at `crop`
         data, (yc, xc) = cutout_around_defocused_psf_multi(
             img=sci,
             size=crop,
@@ -1155,13 +979,10 @@ def exposure_from_defocus_file(fname, fit, threshold=12000, crop=128):
             thresh_sigma=5.0,
         )
 
-        # Extract ERR cutout using the exact same final center
         err, _ = extract_cutout(err_im, (yc, xc), crop)
 
         data = jnp.asarray(data, dtype=float)
         err = jnp.asarray(err, dtype=float)
-
-        print(err.shape, data.shape)
 
         threshold_map = jnp.where(data > threshold, 1, 0)
         bad_data = jnp.isnan(data)
@@ -1174,43 +995,91 @@ def exposure_from_defocus_file(fname, fit, threshold=12000, crop=128):
     obs_id = hdr["OBS_ID"]
     pupil = str(hdr.get("PUPIL", "UNKNOWN")).upper()
 
-    # encode pupil into filename (immutable-safe)
     filename = f"{obs_id}|{pupil}"
-    name = obs_id  # keep name clean if it exists internally
-    filter = "F212N"
-    mjd = hdr["DATE"]
+    name = obs_id
+    filter_name = str(hdr.get("FILTER", "")).strip().upper()
+    if not filter_name:
+        warnings.warn(
+            f"No FILTER keyword found in {fname}; assuming F212N.",
+            stacklevel=2,
+        )
+        filter_name = "F212N"
+    mjd = _header_mjd(hdr)
 
-    return NIRCamExposure(filename, name, filter, data, mjd, err, fit, bad)
-
-
-from abc import abstractmethod
-from typing import Optional
-
-import jax.numpy as np
-from jax import lax
-import numpy as onp
-import jax.scipy as jsp
-import jax.nn as jnn
+    return NIRCamExposure(filename, name, filter_name, data, mjd, err, fit, bad)
 
 
-from functools import partial
+_FILTER_NAME_RE = re.compile(r"[A-Z0-9_+-]+")
 
-# --- keep these names distinct ---
-import jax.numpy as jnp
-import numpy as onp
-
-# ... your earlier imports (jax, eqx, jsp, etc.) ...
+_MJD_KEYWORDS = ("MJD-AVG", "EXPMID", "EXPSTART")
 
 
-filter_file = str(files("camino_data") / "F212N.dat")
+def _header_mjd(hdr):
+    """Return the exposure MJD from the first usable keyword, or None if absent."""
+    for key in _MJD_KEYWORDS:
+        value = hdr.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
-def calc_throughput(file_path, nwavels=1):
+def _resolve_filter_file(filt, filters_dir=None):
+    """Return the throughput table path for a filter name or explicit table path.
 
-    # Load throughput file directly
-    wl_array, throughput_array = onp.loadtxt(file_path, unpack=True)
+    Strings are treated as filter names and resolved to ``{FILTER}.dat``; pass a
+    ``pathlib.Path`` to use a specific table file directly.
+    """
+    if isinstance(filt, os.PathLike):
+        path = Path(filt)
+        if not path.is_file():
+            raise FileNotFoundError(f"Filter table not found: {path}")
+        return path
 
-    # Convert to JAX arrays
+    name = str(filt).strip().upper()
+    # Filter names come from FITS headers, so reject anything that could escape the directory.
+    if not _FILTER_NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"Invalid filter name {filt!r}: expected only A-Z, 0-9, '_', '+' or '-'."
+        )
+
+    if filters_dir is not None:
+        directory = Path(filters_dir)
+    else:
+        directory = Path(str(files("camino").joinpath("data")))
+
+    path = directory / f"{name}.dat"
+    if not path.is_file():
+        available = sorted(p.stem for p in directory.glob("*.dat"))
+        raise ValueError(
+            f"No throughput table for filter {name!r} in {directory}. "
+            f"Available filters: {available}"
+        )
+    return path
+
+
+@functools.lru_cache(maxsize=None)
+def _load_filter_table(path_str):
+    """Load a two-column filter table, cached because it is hit every forward model call."""
+    wl, tp = onp.loadtxt(path_str, unpack=True)
+    wl.setflags(write=False)
+    tp.setflags(write=False)
+    return wl, tp
+
+
+def calc_throughput(filt, nwavels=1, filters_dir=None):
+    """Return wavelength bins and normalised throughput weights for a filter.
+
+    Tables are two-column ``wavelength[Angstrom] throughput`` files, looked up as
+    ``{FILTER}.dat`` in `filters_dir` or in the bundled ``camino/data`` directory.
+    `filt` may also be a ``pathlib.Path`` to a table file. Returned wavelengths
+    are in metres.
+    """
+    path = _resolve_filter_file(filt, filters_dir=filters_dir)
+    wl_array, throughput_array = _load_filter_table(str(path))
     wl = jnp.asarray(wl_array)
     tp = jnp.asarray(throughput_array)
 
@@ -1218,23 +1087,22 @@ def calc_throughput(file_path, nwavels=1):
     wavels = jnp.linspace(wl.min(), wl.max(), 2 * nwavels + 1)[1::2]
 
     areas = []
-
     for i in range(nwavels):
         cond = (edges[i] < wl) & (wl < edges[i + 1])
         throughput = jnp.where(cond, tp, 0.0)
         areas.append(jsp.integrate.trapezoid(y=throughput, x=wl))
-
     areas = jnp.stack(areas)
     weights = areas / areas.sum()
 
-    wavels = wavels * 1e-10  # Angstrom -> metres
-
+    wavels = wavels * 1e-10
     return wavels, weights
 
 
-# JAX-friendly poly spectrum, keep as you had it but use jnp, not np
 class NonNormalisedClippedPolySpectrum:
+    """Evaluate a log10-space polynomial spectrum on a wavelength grid."""
+
     def __init__(self, x: jnp.ndarray, coeffs: jnp.ndarray, clip_nonneg: bool = False):
+        """Create a polynomial spectrum evaluator from a coefficient vector."""
         self.x = jnp.asarray(x, dtype=float)
         self.coeffs = jnp.asarray(coeffs, dtype=float)
         self.clip_nonneg = clip_nonneg
@@ -1242,6 +1110,7 @@ class NonNormalisedClippedPolySpectrum:
             raise ValueError("Coefficients must be a 1D array.")
 
     def _poly(self, x):
+        """Evaluate the polynomial at x using Horner's method."""
         w = 0.0
         for c in self.coeffs[::-1]:
             w = w * x + c
@@ -1249,23 +1118,23 @@ class NonNormalisedClippedPolySpectrum:
 
     @property
     def weights(self):
+        """Return the non-normalised intensity weights at the stored x coordinates."""
         inten = jnp.power(10.0, jax.vmap(self._poly)(self.x))
         if self.clip_nonneg:
             inten = jnp.clip(inten, 0.0, None)
         return inten
 
 
-from typing import Optional
-import equinox as eqx
-
-
 class ModelFit(zdx.Base):
+    """Base class for fitting model parameters to a single exposure."""
 
     @abstractmethod
     def __call__(self, model, exposure):
+        """Compute the forward model for one exposure."""
         pass
 
     def get_key(self, exposure, param):
+        """Map a model parameter name to the exposure-specific storage key."""
         match param:
             case "positions":
                 return exposure.key
@@ -1283,83 +1152,31 @@ class ModelFit(zdx.Base):
                 raise ValueError(f"Parameter {param} has no key")
 
     def map_param(self, exposure, param):
-        """
-        currently everything's global so this is just a fallthrough
-        """
+        """Return the fully-qualified parameter name for a fit item."""
         if param in [
             "fluxes",
             "positions",
             "spectrum",
             "aberrations",
             "defocus",
-        ]:  # , "aberrations", "cold_mask_shift", "cold_mask_rot", "cold_mask_scale", "cold_mask_shear", "primary_rot", "primary_scale", "primary_shear", "breathing", "slope", "spectrum"]:
+        ]:
             return f"{param}.{exposure.get_key(param)}"
         return param
 
     def update_optics_zernikes(self, model, exposure):
+        """Apply Zernike-aberration and defocus updates to the optics model."""
         optics = model.optics
         if "aberrations" in model.params.keys():
-
             coefficients = model.aberrations[self.get_key(exposure, "aberrations")]
-
-            # Nuke the piston gradient to prevent degeneracy
-            fixed_piston = lax.stop_gradient(coefficients[0, 0])
-            # print("coeff type:", type(coefficients))
-            # print("is jax array:", isinstance(coefficients, jax.Array))
-            # coefficients = coefficients.at[0, 0].set(fixed_piston)
-
-            # Stop gradient for science targets
-            # if not self.calibrator:
-            #    coefficients = lax.stop_gradient(coefficients)
+            _ = lax.stop_gradient(coefficients[0, 0])
             optics = optics.set("pupil.coefficients", coefficients)
 
         if "defocus" in model.params.keys():
             disp = model.defocus[self.get_key(exposure, "defocus")]
             optics = optics.set("defocus", disp)
 
-        """if self.fit_reflectivity:
-            coefficients = model.reflectivity[self.get_key("reflectivity")]
-
-            # Stop gradient for science targets
-            if not self.calibrator:
-                coefficients = lax.stop_gradient(coefficients)
-            optics = optics.set("pupil_mask.amp_coeffs", coefficients)
-
-        optics = optics.set("defocus", model.defocus[self.get_key("defocus")])"""
-
         return optics
 
-
-def update_optics(self, model, exposure):
-    optics = model.optics
-
-    if "aberrations" in model.params:
-        key = self.get_key(exposure, "aberrations")
-
-        # params are stored in **nm**
-        opd_nm = model.aberrations[key]  # nm
-
-        # piston removal can be done in nm (equivalent after scaling)
-        pmask = (optics.layers["pupil"].transmission > 0).astype(
-            jnp.float64
-        )  # opd_nm.dtype
-        mean_nm = jnp.sum(opd_nm * pmask) / (jnp.sum(pmask) + 1e-12)
-        opd_nm = opd_nm - mean_nm
-
-        # convert to **meters** for optics
-        opd_m = opd_nm * 1e-9  # m
-
-        # inject
-        optics = optics.set("pupil.opd", opd_m)
-
-    if "defocus" in model.params:
-        disp = model.defocus[self.get_key(exposure, "defocus")]
-        optics = optics.set("defocus", disp)
-
-    return optics
-
-
-import jax.numpy as jnp
 
 LOG10 = jnp.log(10.0)
 
@@ -1367,16 +1184,16 @@ LOG10 = jnp.log(10.0)
 class SinglePointFilterFit(ModelFit):
     """Pixel-basis fitter for point-source PSFs."""
 
-    source: dl.Telescope = eqx.field(static=True)
+    source: dl.PointSource  # holds JAX arrays, so it must not be static
     nwavels: int = eqx.field(static=True)
 
     def __init__(self, nwavels: int = 1):
+        """Initialise the fitter with a single-point source and a wavelength grid."""
         self.source = dl.PointSource(wavelengths=[1.0])
         self.nwavels = int(nwavels)
 
-    # JAX-safe optics updater
-
     def update_optics(self, model, exposure):
+        """Update the optics with pupil amplitude, OPD, and optional defocus terms."""
         optics = model.optics
 
         # ----------------------------
@@ -1559,70 +1376,38 @@ class SinglePointFilterFit(ModelFit):
 
 
 def get_pupil(exp):
+    """Return the pupil tag embedded in an exposure filename."""
     if "|" in exp.filename:
         return exp.filename.split("|")[-1].upper()
     raise KeyError(f"No pupil tag in exp.filename={exp.filename!r}")
 
 
-def get_filter(file_path, nwavels=1):
-
-    filters = {}
-
-    data = onp.loadtxt(file_path, unpack=True)
-
-    filt = "F212N"
-
-    wl_array, throughput_array = np.array(
-        onp.loadtxt(file_path, unpack=True)
-    )  # the F444W filter is the NIRCam one
-
-    edges = onp.linspace(wl_array.min(), wl_array.max(), nwavels + 1)
-    wavels = onp.linspace(wl_array.min(), wl_array.max(), 2 * nwavels + 1)[1::2]
-
-    areas = []
-    for i in range(nwavels):
-        cond1 = edges[i] < wl_array
-        cond2 = wl_array < edges[i + 1]
-        throughput = onp.where(cond1 & cond2, throughput_array, 0)
-        areas.append(jsp.integrate.trapezoid(y=throughput, x=wl_array))
-
-    areas = onp.array(areas)
-    weights = areas / areas.sum()
-
-    wavels *= 1e-10
-    spec = onp.array([wavels, weights])
-
-    filters[filt] = onp.array([wavels, weights])
-
-    return filters
-
-
 def get_filter_test(file):
-    flt = np.asarray(pd.read_csv(file, sep=" "))
+    """Load a filter table as (wavelength, photon-weighted normalised throughput)."""
+    # NB: read_csv treats the first table row as a header, so it is dropped.
+    # Kept as-is because fitting.py's [::5] wavelength subsampling depends on it.
+    flt = pd.read_csv(file, sep=" ").to_numpy()
 
     wv = flt[:, 0]
     bp = flt[:, 1]
 
     ebp = bp / (wv / 1e4)
 
-    nebp = ebp / np.sum(ebp) * (np.max(wv) - np.min(wv)) * 0.01
-    final = flt.at[:, 1].set(nebp)
-
-    return final
-
-
-FILTER_FILE = str(files("camino_data") / "F212N.dat")
-
-filter_files = {"F212N": get_filter_test(FILTER_FILE)[:5, :]}
+    nebp = ebp / onp.sum(ebp) * (onp.max(wv) - onp.min(wv)) * 0.01
+    return jnp.asarray(flt).at[:, 1].set(nebp)
 
 
 class BaseModeller(zdx.Base):
+    """Mixin that exposes a nested parameter dictionary through attribute access."""
+
     params: dict
 
     def __init__(self, params):
+        """Store a parameter dictionary on the model object."""
         self.params = params
 
     def __getattr__(self, key):
+        """Resolve parameter values without forcing a custom __getattribute__ path."""
         if key in self.params:
             return self.params[key]
         for k, val in self.params.items():
@@ -1633,7 +1418,7 @@ class BaseModeller(zdx.Base):
         )
 
     def __getitem__(self, key):
-
+        """Fetch a nested parameter value by key, returning a dict of matches."""
         values = {}
         for param, item in self.params.items():
             if isinstance(item, dict) and key in item.keys():
@@ -1646,9 +1431,10 @@ import jax.tree_util as jtu
 
 
 def set_array(pytree):
-    dtype = np.float64 if jax.config.x64_enabled else np.float32
+    """Convert floating-point leaves in a pytree to the active JAX dtype."""
+    dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
     floats, other = eqx.partition(pytree, eqx.is_inexact_array_like)
-    floats = jtu.tree_map(lambda x: np.array(x, dtype=dtype), floats)
+    floats = jtu.tree_map(lambda x: jnp.asarray(x, dtype=dtype), floats)
     return eqx.combine(floats, other)
 
 
@@ -1722,17 +1508,17 @@ class ModelParams(BaseModeller):
 
     def jacfwd(self, fn, n_batch=1):
         X, unravel_fn = ravel_pytree(self)
-        Xs = np.array_split(X, n_batch)
+        Xs = jnp.array_split(X, n_batch)
         rebuild = lambda X_batch, index: X.at[index : index + len(X_batch)].set(X_batch)
-        lens = np.cumsum(np.array([len(x) for x in Xs]))[:-1]
-        starts = np.concatenate([np.array([0]), lens])
+        lens = jnp.cumsum(jnp.asarray([len(x) for x in Xs], dtype=jnp.int32))[:-1]
+        starts = jnp.concatenate([jnp.asarray([0], dtype=jnp.int32), lens])
 
         @eqx.filter_jacfwd
         def batched_jac_fn(x, index):
             model_params = unravel_fn(rebuild(x, index))
             return eqx.filter_jit(fn)(model_params)
 
-        return np.concatenate(
+        return jnp.concatenate(
             [batched_jac_fn(x, index) for x, index in zip(Xs, starts)], axis=-1
         )
 
@@ -1759,33 +1545,6 @@ def solve_flux_bg_weighted_jax_nansafe(img, err, bad, m_unit, EPS=1e-12):
     return f_star, b_star
 
 
-def inject_views_for_pupil(params, pup, exp):
-    k_pos = exp.fit.get_key(exp, "positions")
-    k_def = exp.fit.get_key(exp, "defocus")
-    k_ab = exp.fit.get_key(exp, "aberrations")
-    k_flux = exp.fit.get_key(exp, "fluxes")  # unused now, but fine to keep
-
-    # shared OPD view
-    params["aberrations"][k_ab] = params["aberrations_shared"]
-
-    if pup == "WLP8":
-        params["positions"][k_pos] = params["positions_wlp8"][k_pos]
-        params["defocus"][k_def] = params["defocus_wlp8"][k_def]
-    elif pup == "WLM8":
-        params["positions"][k_pos] = params["positions_wlm8"][k_pos]
-        params["defocus"][k_def] = params["defocus_wlm8"][k_def]
-    else:
-        raise ValueError(pup)
-
-    # IMPORTANT: do NOT set params["fluxes"][k_flux] here
-    # flux is solved by LLS inside the loss / diagnostics
-
-
-def fft_log(x, eps=1e-30):
-    X = jnp.fft.fftshift(jnp.fft.fft2(jnp.fft.ifftshift(x)))
-    return jnp.log10(jnp.abs(X) + eps)
-
-
 def fft_log(x, eps=1e-30):
     X = jnp.fft.fftshift(jnp.fft.fft2(jnp.fft.ifftshift(x)))
     return jnp.log10(jnp.abs(X) + eps)
@@ -1802,9 +1561,9 @@ def check_convergence_from_file(
         exp = exposure_from_defocus_file(fname, fit)  # new exposure with new fitter
 
         # ensure model sees correct pos/defocus/flux + shared OPD
-        inject_views_for_pupil(params, pup, exp)
+        injected = inject_views_for_pupil(params, pup, exp)
 
-        mdl = params.inject(model_defocus)
+        mdl = injected.inject(model_defocus)
         img = exp.fit(mdl, exp)
 
         # match your usual view
@@ -1868,6 +1627,8 @@ def check_poly_vs_mono(model, exposure, nw=20, plot=False, tol=1e-3, label=""):
     shaped = np.asarray((inten * filt) / (jnp.max(inten * filt) + 1e-12))
 
     if plot:
+        import matplotlib.pyplot as plt
+
         plt.figure(figsize=(6, 4))
         plt.plot(wv * 1e6, shaped, marker="o", label="spectrum × filter")
         plt.plot(
@@ -1926,28 +1687,6 @@ def is_curve_not_flat(shaped, tol=1e-3):
         return False, 0.0
     rel_std = float(np.std(shaped / m))
     return rel_std > tol, rel_std
-
-
-def solve_flux_bg_weighted_jax_nansafe(img, err, bad, m_unit, EPS=1e-12):
-    img0 = jnp.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)
-    err0 = jnp.nan_to_num(err, nan=jnp.inf, posinf=jnp.inf, neginf=jnp.inf)
-
-    good = (~bad) & jnp.isfinite(err0) & (err0 > 0) & jnp.isfinite(img0)
-
-    # avoid dividing on bad pixels
-    err_safe = jnp.where(good, err0, 1.0)
-    w = jnp.where(good, 1.0 / (jnp.maximum(err_safe, EPS) ** 2), 0.0)
-
-    Smm = jnp.sum(w * m_unit * m_unit)
-    Smy = jnp.sum(w * m_unit * img0)
-    Smb = jnp.sum(w * m_unit)
-    Sbb = jnp.sum(w)
-    Sby = jnp.sum(w * img0)
-
-    det = Smm * Sbb - Smb * Smb + EPS
-    f_star = (Smy * Sbb - Smb * Sby) / det
-    b_star = (Smm * Sby - Smb * Smy) / det
-    return f_star, b_star
 
 
 def scale_poisson_no_bg(img, psf_unit, bad):
@@ -2088,7 +1827,7 @@ def gaussian_smooth_nan_jax_static(img, sigma=2.0, truncate=4.0):
     return out
 
 
-# Functions for monkey patching dict methods to make ModelParams act like a dict for params
+# Dict-protocol helpers that fitting.py patches onto ModelParams.
 def _mp_contains(self, k):
     return k in self.params
 
@@ -2107,6 +1846,3 @@ def _mp_keys(self):
 
 def _mp_items(self):
     return self.params.items()
-
-
-print("camino module loaded successfully")

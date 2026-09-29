@@ -3,6 +3,7 @@
 Patched ABCD / LCT / MFT code for camino.
 Authors: Louis, Hayden, Shrish.
 """
+
 from __future__ import annotations
 
 import jax.numpy as np
@@ -341,8 +342,12 @@ def lct_prop_basic(
     spec_out: Array | tuple,
     lam: float,
     ABCD: Array,
+    output_phase: bool = True,
 ) -> Array:
     pre, Kx, Ky, post, pref, scale = lct_kernels(spec_in, spec_out, lam, ABCD)
+    if not output_phase:
+        # The output chirp is a pure phase; skip it when only |u|^2 is needed.
+        post = 1.0
     return lct_kernel_prop(u_in, pre, Kx, Ky, post, pref, scale)
 
 
@@ -357,14 +362,20 @@ def lct_prop(
     mode: str = "physical",
     strip_input: bool = True,
     return_residual: bool = False,
+    output_phase: bool = True,
 ) -> Array:
+    """Collins/LCT propagation. output_phase=False omits every output-plane
+    phase factor (residual chirp and curv_out); the field is then only
+    correct in modulus, which is all a PSF needs."""
     ABCD_res, curv_in, curv_out = factorise_curv(ABCD, curv_in, curv_out, mode)
 
     u_res_in = remove_curv(u_in, spec_in, lam, curv_in)
 
-    u_res_out = lct_prop_basic(u_res_in, spec_in, spec_out, lam, ABCD_res)
+    u_res_out = lct_prop_basic(
+        u_res_in, spec_in, spec_out, lam, ABCD_res, output_phase=output_phase
+    )
 
-    if return_residual:
+    if return_residual or not output_phase:
         return u_res_out
 
     return apply_curv(u_res_out, spec_out, lam, curv_out)
@@ -415,6 +426,3 @@ def propagate_mono_abcd(self, wavelength, offset=np.zeros(2), return_wf=False):
     if return_wf:
         return wf_out
     return wf_out.psf
-
-
-print("abcdlux_patch module loaded successfully")

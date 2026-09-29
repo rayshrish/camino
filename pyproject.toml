@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jwst-camino"
-version = "0.0.4"
+version = "0.0.5"
 description = "CAMINO is a Python package for modelling and inferring wavefront aberrations from JWST/NIRCam observations."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -55,13 +55,23 @@ dev = [
   "jupyter",
 ]
 
-[tool.setuptools]
-py-modules = ["camino", "abcdlux_patch", "fitting", "data_utils"]
+profile = [
+  "xprof",
+]
 
-packages = ["camino_data"]
+[project.urls]
+Homepage = "https://github.com/rayshrish/camino"
+Documentation = "https://rayshrish.github.io/camino/"
+Issues = "https://github.com/rayshrish/camino/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.package-data]
-camino_data = ["*.fits", "*.dat"]
+camino = ["data/*.fits", "data/*.dat"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.black]
 line-length = 88
