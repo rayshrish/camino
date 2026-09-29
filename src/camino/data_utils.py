@@ -24,14 +24,17 @@ import io
 import os
 import re
 import sys
+import warnings
 from contextlib import contextmanager, redirect_stdout
 from datetime import date as Date
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import stpsf
 from astropy.io import fits
+from astropy.time import Time
+from astroquery.exceptions import NoResultsWarning
 from astroquery.mast import MastMissions
 
 _MAST = MastMissions(mission="jwst")
@@ -278,6 +281,8 @@ def download_wlp8_wlm8(
     observing_date
         Date as ``"YYYY-MM-DD"`` or ``datetime.date``. This selects the WSS
         OPD/metadata and is not required to equal the science files' DATE-OBS.
+        A ``datetime`` (UTC, e.g. from :func:`next_wfs_epoch`) selects the
+        OPD closest to exactly that time instead of sampling the whole day.
     download_dir
         Directory in which the CAL FITS files will be saved.
     verbose
@@ -289,31 +294,31 @@ def download_wlp8_wlm8(
         Paths to the downloaded WLP8 and WLM8 ``_cal.fits`` files,
         in that order.
     """
-    if isinstance(observing_date, Date):
-        day = observing_date
+    if isinstance(observing_date, datetime):
+        day = observing_date.date()
+        sample_times = [observing_date]
     else:
-        day = Date.fromisoformat(str(observing_date))
+        if isinstance(observing_date, Date):
+            day = observing_date
+        else:
+            day = Date.fromisoformat(str(observing_date))
+        # Date-only input does not specify which point in the day should be
+        # used for the nearest-OPD lookup. Try several UTC times and
+        # de-duplicate the resulting OPDs.
+        sample_times = [
+            datetime.combine(day, time(hour=hour), tzinfo=timezone.utc)
+            for hour in (0, 6, 12, 18, 23)
+        ]
 
     day_string = day.isoformat()
-
-    # Date-only input does not specify which point in the day should be used
-    # for the nearest-OPD lookup. Try several UTC times and de-duplicate the
-    # resulting OPDs.
-    sample_hours = (0, 6, 12, 18, 23)
     tried_opds: set[str] = set()
     failures: list[str] = []
 
-    for hour in sample_hours:
-        dt = datetime.combine(
-            day,
-            time(hour=hour, minute=0),
-            tzinfo=timezone.utc,
-        )
-
+    for dt in sample_times:
         try:
             entry = _metadata_from_time(dt, verbose=False)
         except Exception as exc:
-            failures.append(f"{hour:02d}:00 UTC metadata lookup: {exc}")
+            failures.append(f"{dt:%H:%M} UTC metadata lookup: {exc}")
             continue
 
         if entry["opd_token"] in tried_opds:
@@ -375,4 +380,63 @@ def download_wlp8_wlm8(
     raise RuntimeError(
         f"Could not find a complete WLP8/WLM8 pair for {day_string}.\n"
         f"Tried:\n  - {details}"
+    )
+
+
+def next_wfs_epoch(
+    observing_date: str | Date,
+    *,
+    max_tries: int = 5,
+    verbose: bool = True,
+) -> datetime:
+    """
+    Return the time of the next WSS epoch after ``observing_date``.
+
+    Steps through the WSS OPDs that follow the end of the given UTC day and
+    returns the first whose visit has a complete F212N WLP8/WLM8 pair, as a
+    naive UTC ``datetime``. Pass it to :func:`download_wlp8_wlm8` to fetch
+    that pair.
+
+    Parameters
+    ----------
+    observing_date
+        Date as ``"YYYY-MM-DD"``, ``datetime.date`` or ``datetime``. Epochs
+        on this UTC day are excluded; a ``datetime`` excludes epochs up to
+        that time.
+    max_tries
+        Number of following OPDs to check before giving up.
+    verbose
+        Print the selected OPD.
+    """
+    if isinstance(observing_date, datetime):
+        after = observing_date
+        if after.tzinfo is not None:
+            after = after.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        if not isinstance(observing_date, Date):
+            observing_date = Date.fromisoformat(str(observing_date))
+        after = datetime.combine(observing_date, time(23, 59, 59))
+
+    skipped: list[str] = []
+    for _ in range(max_tries):
+        # stpsf widens its time window until a query succeeds, so the
+        # empty early queries are expected.
+        with hide_download_messages(), warnings.catch_warnings():
+            warnings.simplefilter("ignore", NoResultsWarning)
+            _, next_opd, _, delta_days = stpsf.mast_wss.mast_wss_opds_around_date_query(
+                Time(after, scale="utc"), verbose=False
+            )
+        epoch = after + timedelta(days=float(delta_days))
+        entry = _metadata_from_time(epoch.replace(tzinfo=timezone.utc))
+        wlm8, wlp8 = _pick_earliest_pair(_fetch_matches(entry))
+        if wlm8 is not None and wlp8 is not None:
+            if verbose:
+                print(f"Next epoch: {epoch:%Y-%m-%d %H:%M} UTC ({entry['opd_token']})")
+            return epoch
+        skipped.append(str(next_opd))
+        after = epoch + timedelta(minutes=1)
+
+    raise LookupError(
+        f"No WLP8/WLM8 pair in the {max_tries} WSS epochs after "
+        f"{observing_date}: {', '.join(skipped)}"
     )
