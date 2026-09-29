@@ -1796,15 +1796,19 @@ def continue_fit(result, maxiter=2000):
     return result
 
 
-def get_mast_wss_path(date, choice="closest"):
+def get_mast_wss_path(date, choice="closest", verbose=True):
     """Resolve the official WSS product using the stpsf (formerly WebbPSF) API.
 
     Requires stpsf's reference data. Network access may be used by stpsf. A local WSS path can instead be passed directly to
-    compare_with_mast, with no lookup required.
+    compare_with_mast, with no lookup required. verbose prints stpsf's OPD
+    query summary; download messages (which show local paths) are hidden.
     """
     import stpsf
 
-    filename = stpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=True)
+    from .data_utils import hide_download_messages
+
+    with hide_download_messages():
+        filename = stpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=verbose)
     direct = Path(filename).expanduser()
     if direct.is_file():
         return direct
