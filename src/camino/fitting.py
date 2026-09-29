@@ -6,6 +6,10 @@ load_data(...) -> FitProblem: load a WLP8/WLM8 pair and build the model.
 fit_data(..., fit_mode="pixel" | "ptt_pixel") -> FitResult: run the fit.
 fit_data(..., initial=previous_result) -> FitResult: warm start. Skip the
     initial stages, refit positions, then run only the final L-BFGS-B.
+fit_data(ptt_data, initial=pixel_result, reseed="all" | ids) -> FitResult:
+    a ptt_pixel fit from a pixel fit (e.g. the previous epoch), re-searching
+    the seed grid on all or the listed mirrors.
+diagnose_mirror_changes(ptt_data, result, reference): find mirrors that moved.
 continue_fit(result, maxiter=2000): continue the final L-BFGS-B stage.
 compare_with_mast(result, mast_wss_path): make the notebook comparison figure.
 
@@ -29,17 +33,22 @@ Numerical conventions retained from the supplied notebooks
 * pixel: output flip on axis 1, scheduled
   SGD of defocus/positions (60 steps), then illuminated-pixel L-BFGS-B.
   QV is segment-wise on the piston-centred OPD in nm.
-* ptt_pixel: pupil flip on axis 0; fixed defocus;
-  BFGS positions, sequential 27-seed/local bounded L-BFGS-B per mirror,
-  joint PTT BFGS, position refit, then joint PTT/pixel L-BFGS-B.
-  QV, L2 and global-slope regularisation act on the pixel residual only.
+* ptt_pixel: pupil flip on axis 0; BFGS positions and defocus,
+  sequential 27-seed/local bounded L-BFGS-B per mirror, joint PTT BFGS,
+  position/defocus refit, then joint PTT/pixel L-BFGS-B. The pixel residual
+  is kept orthogonal to every mirror's piston/tip/tilt, and the per-mirror
+  stage propagates only the mirror being fitted (ptt_orthogonal_residual,
+  ptt_segment_propagation). QV, L2 and global-slope regularisation act on
+  the pixel residual only.
+* The two orientations give identical images for the same OPD; only the
+  sign of the y position differs, which warm starts account for.
 * Both propagate on a 512-pixel pupil. The output field defaults to the
   detector cutout (psf_npixels = fit_npix, times oversample): the MFT
   evaluates each output pixel independently, so a larger field only adds
   pixels that render() crops away.
-* The ptt_pixel preset retains the notebook's actual fixed defocus values:
-  +44010282.72 and -43542523.19 nm. They are editable configuration values,
-  not universal instrument calibration constants.
+* The ptt_pixel preset starts its defocus at the source notebook's values,
+  +44010282.72 and -43542523.19 nm, and fits it (bfgs_defocus); set
+  bfgs_defocus=False to hold them fixed as the notebook did.
 * All 18 physical mirrors are fitted in ptt_pixel mode. Split labels share
   one plane and one coordinate centre/scale. No 100-nm selection is applied.
 * Pupil amplitude remains frozen; flux/background are solved analytically.
@@ -127,6 +136,7 @@ __all__ = [
     "continue_fit",
     "compare_with_mast",
     "get_mast_wss_path",
+    "diagnose_mirror_changes",
     "PHYSICAL_TO_LABELS",
     "NIRCamFresnelOptics",
     "NRCDetectorLong",
@@ -163,16 +173,32 @@ class FitConfig:
     position_maxiter: int = 200
     position_refit_maxiter: int = 300
     position_scale: float = 1e-4
+    # Fit defocus alongside positions in the BFGS position stages (default:
+    # ptt_pixel only; pixel mode fits defocus by SGD in stage 1).
+    bfgs_defocus: bool | None = None
+    defocus_scale: float = 1e2  # nm per BFGS unit (matches position curvature)
     skip_grid_init: bool = False
     # Piston, tip, tilt bounds; the seed grid uses [lower, 0, upper].
     ptt_bounds_nm: tuple = ((-3500.0, 3500.0),) * 3
     local_ptt_maxiter: int = 50
+    ptt_seed_batch: int = 9  # seeds evaluated per vectorised call
+    # Fit each mirror by propagating only its segment over a cached field of
+    # the others (monochromatic fits); False uses the full model throughout.
+    ptt_segment_propagation: bool = True
+    # Keep the ptt_pixel residual orthogonal to every mirror's piston/tip/tilt,
+    # so PTT lives only in the coefficients. Otherwise the two trade planes
+    # along a nearly flat valley that stalls the final L-BFGS-B.
+    ptt_orthogonal_residual: bool = True
+    # PTT coefficients enter the final L-BFGS-B vector as c / scale. One
+    # coefficient moves thousands of pixels, so unscaled it has far larger
+    # curvature than a pixel, which slows L-BFGS-B's scalar initial Hessian.
+    ptt_coefficient_scale: float = 1e-2  # ~1/sqrt(pixels per mirror)
     joint_ptt_maxiter: int = 100
     ptt_gtol: float = 1e-3
     stage2_maxiter: int = 2000
     stage2_gtol: float = 1e-4
     stage2_maxcor: int = 20
-    stage2_ftol: float = 2.220446049250313e-9
+    stage2_ftol: float | None = None  # pixel: 2.2e-9; ptt_pixel: 1e-8
     stage2_maxls: int = 20
     stage2_maxfun: int = 15000
     lambda_qv: float = 6e-3
@@ -195,6 +221,8 @@ class FitConfig:
             "defocus_nm": (44010282.72, -43542523.19) if advanced else (4.3e7, -4.3e7),
             "lambda_pixel_l2": 1e-4 if advanced else 0.0,
             "lambda_global_plane": 1e2 if advanced else 0.0,
+            "bfgs_defocus": advanced,
+            "stage2_ftol": 1e-8 if advanced else 2.220446049250313e-9,
         }
         for key, value in defaults.items():
             if getattr(self, key) is None:
@@ -213,6 +241,7 @@ class FitConfig:
             "stage2_maxcor",
             "stage2_maxls",
             "stage2_maxfun",
+            "ptt_seed_batch",
         ):
             value = getattr(self, name)
             if not isinstance(value, (int, np.integer)) or value <= 0:
@@ -229,7 +258,14 @@ class FitConfig:
             value = getattr(self, name)
             if not isinstance(value, (int, np.integer)) or value < 0:
                 raise ValueError(f"{name} must be a nonnegative integer")
-        for name in ("position_scale", "pixel_pitch", "diameter", "pixel_scale"):
+        for name in (
+            "position_scale",
+            "defocus_scale",
+            "ptt_coefficient_scale",
+            "pixel_pitch",
+            "diameter",
+            "pixel_scale",
+        ):
             if not np.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         if len(self.defocus_nm) != 2 or not np.all(np.isfinite(self.defocus_nm)):
@@ -368,6 +404,38 @@ def _local_filter(filter_path, filter_name, fit_mode):
 
 
 # Shared optical model, detector, parameter adapter and numerical helpers.
+class SegmentField(eqx.Module):
+    """Cached image-plane field for fitting one mirror segment at a time.
+
+    Propagation is linear in the pupil field, so with every other segment
+    fixed the image field is u_rest + U(segment). u_rest is computed once;
+    each evaluation then propagates only the segment's bounding box (a
+    fraction of the pupil width). A pupil pixel outside the segment tracks
+    the global phase that piston removal introduces when the segment moves.
+    Valid only while positions, defocus and the other segments stay fixed.
+    """
+
+    u_rest: Array  # image field of the other segments (no output phase)
+    mask: Array  # segment mask in the post-layer pupil orientation
+    start: Array  # (row, col) of the bounding box, dynamic
+    ref: Array  # flat index of a reference pupil pixel outside the segment
+    u_ref: Array  # that pixel's pupil field when u_rest was computed
+    shape: tuple = eqx.field(static=True)  # common bounding-box shape
+
+    def segment_image_field(self, optics, u_in, x_in, wavelength):
+        rows, cols = self.shape
+        box = jax.lax.dynamic_slice(u_in * self.mask, tuple(self.start), self.shape)
+        x_box = jax.lax.dynamic_slice(x_in, (self.start[1],), (cols,))
+        y_box = jax.lax.dynamic_slice(x_in, (self.start[0],), (rows,))
+        return optics.propagate_field(box, (x_box, y_box), wavelength)
+
+    def image_field(self, optics, u_in, x_in, wavelength):
+        phase = u_in.ravel()[self.ref] / self.u_ref
+        return self.u_rest * phase + self.segment_image_field(
+            optics, u_in, x_in, wavelength
+        )
+
+
 class NIRCamFresnelOptics(dl.AngularOpticalSystem):
     defocus: jnp.ndarray
     fnumber: jnp.ndarray
@@ -375,6 +443,7 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
     pixel_pitch: float
     opd_phase_sign: float
     orientation: str = eqx.field(static=True)
+    segment: SegmentField | None
 
     def __init__(
         self,
@@ -400,6 +469,7 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
         self.defocus = defocus
         self.pixel_pitch = pixel_pitch
         self.opd_phase_sign = opd_phase_sign
+        self.segment = None
 
         theta_native = dlu.arcsec2rad(self.psf_pixel_scale)
         theta_pix = theta_native / self.oversample
@@ -428,7 +498,11 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
             raise ValueError("orientation must be 'pupil_flip' or 'output_flip'")
         self.layers = dlu.list2dictionary(layers, ordered=True)
 
-    def propagate_mono(self, wavelength, offset=onp.zeros(2), return_wf=False):
+    def pupil_coords(self):
+        return dlu.nd_coords(self.wf_npixels, self.diameter / self.wf_npixels)
+
+    def pupil_field(self, wavelength, offset):
+        """Complex pupil field after every layer, the phase sign and tilt."""
         wf = dl.Wavefront(self.wf_npixels, self.diameter, wavelength)
 
         for layer in self.layers.values():
@@ -437,9 +511,10 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
         if self.opd_phase_sign == -1.0:
             wf = wf.set(["phase"], [-wf.phase])
 
-        wf = wf.tilt(offset)
-        u_in = wf.phasor
+        return wf.tilt(offset).phasor
 
+    def propagate_field(self, u_in, spec_in, wavelength, output_phase=False):
+        """LCT-propagate a pupil field sampled on spec_in to the detector."""
         fl_fit = self.fnumber * self.diameter
         dz = self.defocus * 1e-9
         L = self.fnominal + dz
@@ -451,27 +526,65 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
             ]
         )
 
-        n_in = self.wf_npixels
-        dx_in = self.diameter / n_in
-        x_in = dlu.nd_coords(n_in, dx_in)
-
         n_out = self.psf_npixels * self.oversample
         dx_out = self.pixel_pitch / self.oversample
         x_out = dlu.nd_coords(n_out, dx_out)
 
-        theta_pix = dlu.arcsec2rad(self.psf_pixel_scale) / self.oversample
-
-        u_out = abcdlux.lct_prop(
+        return abcdlux.lct_prop(
             u_in=u_in,
-            spec_in=x_in,
+            spec_in=spec_in,
             spec_out=x_out,
             lam=wavelength,
             ABCD=abcd,
             mode="physical",
             strip_input=False,
-            output_phase=return_wf,
+            output_phase=output_phase,
         )
 
+    def propagate(
+        self,
+        wavelengths,
+        offset=onp.zeros(2),
+        weights=None,
+        return_wf=False,
+        return_psf=False,
+    ):
+        """Polychromatic PSF from |u|^2 directly.
+
+        dLux's propagate always builds Wavefronts (abs/angle and the output
+        phase factors) even when only the PSF is used; that path is kept for
+        return_wf=True.
+        """
+        if return_wf and return_psf:
+            raise ValueError(
+                "return_wf and return_psf cannot both be True. Please choose one."
+            )
+        if return_wf:
+            return super().propagate(wavelengths, offset, weights, return_wf=True)
+        wavelengths = jnp.atleast_1d(wavelengths)
+        if weights is None:
+            weights = jnp.ones_like(wavelengths) / wavelengths.size
+        psfs = jax.vmap(lambda wl: self.propagate_mono(wl, jnp.asarray(offset)))(
+            wavelengths
+        )
+        psf = jnp.tensordot(jnp.atleast_1d(weights), psfs, axes=1)
+        if return_psf:
+            pixel_scale = dlu.arcsec2rad(self.psf_pixel_scale) / self.oversample
+            return dl.PSF(psf, pixel_scale)
+        return psf
+
+    def propagate_mono(self, wavelength, offset=onp.zeros(2), return_wf=False):
+        u_in = self.pupil_field(wavelength, offset)
+        x_in = self.pupil_coords()
+        if self.segment is None:
+            u_out = self.propagate_field(u_in, x_in, wavelength, output_phase=return_wf)
+        elif return_wf:
+            raise ValueError("Segment propagation returns intensities only")
+        else:
+            u_out = self.segment.image_field(self, u_in, x_in, wavelength)
+
+        n_out = self.psf_npixels * self.oversample
+        theta_pix = dlu.arcsec2rad(self.psf_pixel_scale) / self.oversample
         if self.orientation == "output_flip":
             u_out = jnp.flip(u_out, axis=0)
         if not return_wf:
@@ -686,6 +799,17 @@ def build_segment_labels(pupil_path: str, downsample_factor: int):
     return out
 
 
+def ptt_dual_basis(basis, masks):
+    """Least-squares dual of the PTT basis: tensordot(dual, opd, 2) gives the
+    54 coefficients whose ptt_map best fits opd on each mirror."""
+    basis, masks = np.asarray(basis), np.asarray(masks)
+    dual = np.zeros_like(basis)
+    for i, mask in enumerate(masks):
+        b = basis[3 * i : 3 * i + 3][:, mask]  # (3, pixels on this mirror)
+        dual[3 * i : 3 * i + 3][:, mask] = np.linalg.solve(b @ b.T, b)
+    return jnp.asarray(dual)
+
+
 def center_opd_on_pupil(opd, mask):
     mask_f = mask.astype(jnp.float64)
     mean = jnp.sum(opd * mask_f) / (jnp.sum(mask_f) + EPS)
@@ -848,8 +972,21 @@ class FitProblem:
     mirror_mask: Any
     ptt_masks: Any = None
     ptt_basis: Any = None
+    ptt_dual: Any = None  # see ptt_dual_basis
     plane_A: Any = None
     plane_pinv: Any = None
+    plane_pinv_grid: Any = None  # plane_pinv on the pupil grid, zero off-mask
+    segment_box_shape: tuple | None = None  # common per-mirror bounding box
+
+    @property
+    def observation_time(self):
+        """UTC datetime of the earliest exposure (None if unknown)."""
+        mjds = [e.mjd for e in self.exposures.values() if e.mjd is not None]
+        if not mjds:
+            return None
+        from astropy.time import Time
+
+        return Time(min(mjds), format="mjd", scale="utc").to_datetime()
 
     @property
     def physical_ids(self):
@@ -867,6 +1004,11 @@ class FitProblem:
         return _local_filter(
             self.paths["filter"], self.config.filter_name, self.config.fit_mode
         )
+
+    def ptt_project(self, pixel_nm):
+        """Split a pixel map into (PTT coefficients, orthogonal remainder)."""
+        coefficients = jnp.tensordot(self.ptt_dual, pixel_nm, axes=2)
+        return coefficients, pixel_nm - self.ptt_map(coefficients)
 
     def ptt_map(self, coefficients):
         if self.ptt_basis is None:
@@ -895,19 +1037,74 @@ class FitProblem:
             "aberrations_shared": (self.ptt_map(coefficients) + pixel_nm) * 1e-9,
         }
 
-    def render(self, params):
-        """Render both images with the exact notebook flux/background solve.
-
-        Internal JIT callers must be inside filter_context(). Public result
-        methods manage this automatically.
-        """
+    def exposure_models(self, params):
+        """Return {pupil: model with that exposure's parameters injected}."""
         full = build_full_params(params, self.params_template, self.exposures)
         opd, _ = center_opd_on_pupil(params["aberrations_shared"], self.mirror_mask)
         full = eqx.tree_at(lambda p: p.params["aberrations_shared"], full, opd)
+        return {
+            pup: cam.inject_into_model(
+                self.model, cam.inject_views_for_pupil(full, pup, exp)
+            )
+            for pup, exp in self.exposures.items()
+        }
+
+    def segment_fields(self, params, index):
+        """Cache the image field of every mirror but physical mirror `index`.
+
+        Returns {pupil: SegmentField} for render(..., segments=...), valid
+        while only that mirror's PTT coefficients change. Monochromatic only.
+        """
+        mask = np.asarray(self.ptt_masks[index])
+        models = self.exposure_models(params)
+        fields = {}
+        for pup, exp in self.exposures.items():
+            model = models[pup]
+            source = exp.fit.make_source(model, exp)
+            if np.size(source.wavelengths) != 1:
+                raise NotImplementedError("Segment propagation needs n_wavels=1")
+            optics = exp.fit.update_optics(model, exp)
+            wavelength = source.wavelengths[0]
+            u_in = optics.pupil_field(wavelength, source.position)
+            x_in = optics.pupil_coords()
+            post = np.flip(mask, 0) if optics.orientation == "pupil_flip" else mask
+            rows, cols = self.segment_box_shape
+            n = post.shape[0]
+            r, c = np.flatnonzero(post.any(1)), np.flatnonzero(post.any(0))
+            start = jnp.asarray([min(r[0], n - rows), min(c[0], n - cols)])
+            outside = np.where(post, 0.0, np.abs(np.asarray(u_in)))
+            ref = int(np.argmax(outside))
+            field = SegmentField(
+                u_rest=jnp.zeros(()),
+                mask=jnp.asarray(post, dtype=jnp.float64),
+                start=start,
+                ref=jnp.asarray(ref),
+                u_ref=u_in.ravel()[ref],
+                shape=self.segment_box_shape,
+            )
+            u_full = optics.propagate_field(u_in, x_in, wavelength)
+            u_seg = field.segment_image_field(optics, u_in, x_in, wavelength)
+            fields[pup] = eqx.tree_at(lambda f: f.u_rest, field, u_full - u_seg)
+        return fields
+
+    def render(self, params, segments=None):
+        """Render both images with the exact notebook flux/background solve.
+
+        Internal JIT callers must be inside filter_context(). Public result
+        methods manage this automatically. segments (from segment_fields)
+        propagates only one mirror on top of a cached field of the others.
+        """
+        models = self.exposure_models(params)
         rendered = {}
         for pup, exp in self.exposures.items():
-            view = cam.inject_views_for_pupil(full, pup, exp)
-            model = cam.inject_into_model(self.model, view)
+            model = models[pup]
+            if segments is not None:
+                model = eqx.tree_at(
+                    lambda m: m.optics.segment,
+                    model,
+                    segments[pup],
+                    is_leaf=lambda x: x is None,
+                )
             psf = dlu.resize(exp.fit(model, exp), self.config.fit_npix)
             img_fit = jnp.where(exp.bad, psf, exp.data)
             err_fit = jnp.where(exp.bad, 1e20, exp.err)
@@ -925,8 +1122,8 @@ class FitProblem:
             )
         return rendered
 
-    def data_loss(self, params):
-        rendered = self.render(params)
+    def data_loss(self, params, segments=None):
+        rendered = self.render(params, segments)
         total = 0.0
         for pup, exp in self.exposures.items():
             r = rendered[pup]
@@ -950,11 +1147,15 @@ class FitProblem:
         pixel = params["full_pixel_opd_nm"] * self.mirror_mask
         qv = qv_masked_nm(pixel, self.mirror_mask)
         l2 = jnp.mean(pixel**2)  # Mean over the full square, as in the notebook.
-        ax, ay, _ = self.plane_pinv @ pixel[self.mirror_mask]
+        # plane_pinv @ pixel[mask] without a gather: its gradient would be a
+        # scatter, which XLA:CPU runs as a per-pixel loop.
+        ax, ay, _ = jnp.tensordot(self.plane_pinv_grid, pixel, axes=2)
         # Retain original uncentred coordinate convention for this penalty.
         slope = ax * self.plane_A[:, 0] + ay * self.plane_A[:, 1]
-        bad = jnp.any(self.ptt_masks, axis=0)
-        mix = good_bad_boundary_mix_nm(pixel, self.mirror_mask & ~bad, bad)
+        # Fixed masks, combined in NumPy: inside jit XLA would constant-fold
+        # an 18x512x512 reduction at every compile.
+        bad = np.asarray(self.ptt_masks).any(axis=0)
+        mix = good_bad_boundary_mix_nm(pixel, np.asarray(self.mirror_mask) & ~bad, bad)
         return dict(
             pixel_qv=c.lambda_qv * qv,
             pixel_l2=c.lambda_pixel_l2 * l2,
@@ -1099,11 +1300,20 @@ def load_data(
         )
         if c.fit_mode == "ptt_pixel":
             problem.ptt_masks, problem.ptt_basis = build_physical_ptt_basis(labels)
+            problem.ptt_dual = ptt_dual_basis(problem.ptt_basis, problem.ptt_masks)
+            masks = np.asarray(problem.ptt_masks)
+            problem.segment_box_shape = (
+                int(max(np.ptp(np.flatnonzero(m.any(1))) + 1 for m in masks)),
+                int(max(np.ptp(np.flatnonzero(m.any(0))) + 1 for m in masks)),
+            )
             yy, xx = jnp.indices(labels.shape)
             problem.plane_A = jnp.stack(
                 [xx[mask], yy[mask], jnp.ones(int(mask.sum()))], axis=1
             ).astype(jnp.float64)
             problem.plane_pinv = jnp.linalg.pinv(problem.plane_A)
+            problem.plane_pinv_grid = (
+                jnp.zeros((3, *mask.shape)).at[:, mask].set(problem.plane_pinv)
+            )
         return problem
 
 
@@ -1310,24 +1520,26 @@ def _run_pixel_initial_stage(problem, histories):
 
 
 def _run_positions(problem, params, histories, maxiter, name):
+    """BFGS fit of the image positions, and the defocus if config.bfgs_defocus."""
     if maxiter == 0:
         return params
     c = problem.config
-    x0 = (
-        np.concatenate(
-            [
-                np.asarray(params["positions_wlp8_xy"]),
-                np.asarray(params["positions_wlm8_xy"]),
-            ]
+    scales = {
+        "positions_wlp8_xy": c.position_scale,
+        "positions_wlm8_xy": c.position_scale,
+    }
+    if c.bfgs_defocus:
+        scales.update(
+            defocus_wlp8_val=c.defocus_scale, defocus_wlm8_val=c.defocus_scale
         )
-        / c.position_scale
-    )
+    sizes = [int(np.size(params[k])) for k in scales]
+    x0 = np.concatenate([np.ravel(params[k]) / v for k, v in scales.items()])
 
     def unpack(x):
+        parts = jnp.split(x, np.cumsum(sizes)[:-1])
         return {
             **params,
-            "positions_wlp8_xy": x[:2] * c.position_scale,
-            "positions_wlm8_xy": x[2:] * c.position_scale,
+            **{k: part * scales[k] for k, part in zip(scales, parts)},
         }
 
     evaluate = jax.jit(jax.value_and_grad(lambda x: problem.data_loss(unpack(x))))
@@ -1344,52 +1556,104 @@ def _run_positions(problem, params, histories, maxiter, name):
     return unpack(jnp.asarray(result.x))
 
 
-def _run_ptt_initial_stages(problem, histories, output_dir):
+def _run_ptt_initial_stages(
+    problem, histories, output_dir, from_params=None, mirrors=None, extra_seeds=None
+):
+    """Positions, per-mirror PTT seeds and fits, joint PTT, position refit.
+
+    From zero by default. With from_params (a previous fit's params) the seed
+    grid runs only for `mirrors` (physical ids), each also seeded from its
+    current coefficients and any extra_seeds[id]; the pixel residual in
+    from_params is kept throughout.
+    """
     c = problem.config
-    params = problem.with_ptt(
-        problem.initial_params, jnp.zeros(problem.n_ptt, dtype=jnp.float64)
-    )
+    if from_params is None:
+        from_params = problem.with_ptt(
+            problem.initial_params, jnp.zeros(problem.n_ptt, dtype=jnp.float64)
+        )
+    extra_seeds = {} if extra_seeds is None else extra_seeds
     params = _run_positions(
-        problem, params, histories, c.position_maxiter, "Stage 0 — BFGS positions"
+        problem, from_params, histories, c.position_maxiter, "Stage 0 — BFGS positions"
     )
     _checkpoint(problem, params, histories, output_dir, "stage0")
     base = dict(params)
-    coefficients = np.zeros(problem.n_ptt, dtype=np.float64)
+    residual = base["full_pixel_opd_nm"]
+    coefficients = np.array(base["bad_plane_nm"], dtype=np.float64)
+    warm = mirrors is not None
 
     def loss_ptt(x):
-        return problem.data_loss(problem.with_ptt(base, x))
+        return problem.data_loss(problem.with_ptt(base, x, residual))
 
-    seed_loss = jax.jit(loss_ptt)
+    # One compiled gradient serves the joint fit (and the per-mirror fits
+    # without segment propagation): in reverse mode all 54 partials cost the
+    # same as the 3 a mirror needs.
+    ptt_value_and_grad = jax.jit(jax.value_and_grad(loss_ptt))
+    segmented = c.ptt_segment_propagation and c.n_wavels == 1
+
+    def mirror_loss(q, fixed, start, fields):
+        """Loss with mirror coefficients q at `start`; the rest from fixed."""
+        x = jax.lax.dynamic_update_slice(fixed, q, (start,))
+        if fields is None:
+            return loss_ptt(x)
+        return problem.data_loss(problem.with_ptt(base, x, residual), segments=fields)
+
+    # start and fields are traced, so one compilation serves every mirror.
+    seed_losses = jax.jit(jax.vmap(mirror_loss, in_axes=(0, None, None, None)))
+    mirror_value_and_grad = jax.jit(jax.value_and_grad(mirror_loss))
     if not c.skip_grid_init:
-        seeds = list(product(*(np.unique([lo, 0.0, hi]) for lo, hi in c.ptt_bounds_nm)))
+        grid = np.asarray(
+            list(product(*(np.unique([lo, 0.0, hi]) for lo, hi in c.ptt_bounds_nm)))
+        )
         for i, physical_id in enumerate(problem.physical_ids):
+            if warm and physical_id not in mirrors:
+                continue
             start = 3 * i
-            best_loss = np.inf
-            best_seed = coefficients[start : start + 3].copy()
+            seeds = grid
+            if warm:
+                extra = [coefficients[start : start + 3]]
+                extra += [
+                    np.asarray(h, float) for h in extra_seeds.get(physical_id, [])
+                ]
+                seeds = np.concatenate(
+                    [grid, np.clip(extra, *np.transpose(c.ptt_bounds_nm))]
+                )
+            batch = min(c.ptt_seed_batch, len(seeds))
+            # Pad to whole batches so every call has the same shape.
+            padded = np.concatenate(
+                [seeds, np.repeat(seeds[-1:], -len(seeds) % batch, 0)]
+            )
+            fixed = jnp.asarray(coefficients)
+            fields = (
+                problem.segment_fields(problem.with_ptt(base, fixed, residual), i)
+                if segmented
+                else None
+            )
+            values = []
             with tqdm(
-                seeds,
+                total=len(seeds),
                 desc=f"PTT seeds — physical {physical_id}",
                 disable=not c.progress,
             ) as bar:
-                for seed in bar:
-                    trial = coefficients.copy()
-                    trial[start : start + 3] = seed
-                    value = float(seed_loss(jnp.asarray(trial)))
-                    if value < best_loss:
-                        best_loss, best_seed = value, np.asarray(seed).copy()
-                    bar.set_postfix(best=f"{best_loss:.6e}", refresh=False)
-            if not np.isfinite(best_loss):
+                for k in range(0, len(padded), batch):
+                    chunk = jnp.asarray(padded[k : k + batch])
+                    values.extend(np.asarray(seed_losses(chunk, fixed, start, fields)))
+                    bar.update(min(batch, len(seeds) - k))
+            values = np.asarray(values[: len(seeds)])
+            if not np.any(np.isfinite(values)):
                 raise FloatingPointError(
                     f"No finite PTT seed for physical segment {physical_id}"
                 )
-            fixed = jnp.asarray(coefficients)
+            # First minimum, as the original sequential strict-< search.
+            best_seed = seeds[
+                int(np.argmin(np.where(np.isfinite(values), values, np.inf)))
+            ]
 
-            def local_loss(q):
-                return loss_ptt(fixed.at[start : start + 3].set(q))
+            def local_value_and_grad(q, start=start, fixed=fixed, fields=fields):
+                return mirror_value_and_grad(jnp.asarray(q), fixed, start, fields)
 
             if c.local_ptt_maxiter:
                 local = _run_optimizer(
-                    jax.jit(jax.value_and_grad(local_loss)),
+                    local_value_and_grad,
                     best_seed,
                     name=f"Stage 1a — local PTT physical {physical_id}",
                     method="L-BFGS-B",
@@ -1406,14 +1670,14 @@ def _run_ptt_initial_stages(problem, histories, output_dir):
                 coefficients[start : start + 3] = best_seed
             _checkpoint(
                 problem,
-                problem.with_ptt(base, jnp.asarray(coefficients)),
+                problem.with_ptt(base, jnp.asarray(coefficients), residual),
                 histories,
                 output_dir,
                 f"stage1a_physical_{physical_id:02d}",
             )
     if c.joint_ptt_maxiter:
         joint = _run_optimizer(
-            jax.jit(jax.value_and_grad(loss_ptt)),
+            ptt_value_and_grad,
             coefficients,
             name="Stage 1 — joint PTT BFGS",
             method="BFGS",
@@ -1423,7 +1687,7 @@ def _run_ptt_initial_stages(problem, histories, output_dir):
             record=_record_small,
         )
         coefficients = joint.x
-    params = problem.with_ptt(base, jnp.asarray(coefficients))
+    params = problem.with_ptt(base, jnp.asarray(coefficients), residual)
     _checkpoint(problem, params, histories, output_dir, "stage1")
     params = _run_positions(
         problem,
@@ -1479,11 +1743,22 @@ def _make_final_objective(problem, base_params):
         pixel = (
             np.zeros(n_pixels) if pixel is None else np.asarray(pixel)[np.asarray(mask)]
         )
-        x0 = np.concatenate([np.asarray(base["bad_plane_nm"]), pixel])
+        coefficients = np.asarray(base["bad_plane_nm"])
+        orthogonal = problem.config.ptt_orthogonal_residual
+        if orthogonal:
+            # Move any plane already in the residual (e.g. from a warm start)
+            # into the coefficients; the total OPD is unchanged.
+            planes, rest = problem.ptt_project(embed(jnp.asarray(pixel)))
+            coefficients = coefficients + np.asarray(planes)
+            pixel = np.asarray(rest)[np.asarray(mask)]
+        scale = problem.config.ptt_coefficient_scale
+        x0 = np.concatenate([coefficients / scale, pixel])
 
         def unpack(x):
             pixel = embed(jnp.asarray(x[problem.n_ptt :], dtype=jnp.float64))
-            return problem.with_ptt(base, x[: problem.n_ptt], pixel)
+            if orthogonal:
+                pixel = problem.ptt_project(pixel)[1]
+            return problem.with_ptt(base, x[: problem.n_ptt] * scale, pixel)
 
     evaluate = jax.jit(jax.value_and_grad(lambda x: problem.loss(unpack(x))))
     return x0, unpack, evaluate
@@ -1698,7 +1973,8 @@ def _record_final(problem):
     def record(h, x):
         h.pixel_rms_nm.append(float(np.std(x[problem.n_ptt :])))
         if problem.n_ptt:
-            h.parameter_history.append(x[: problem.n_ptt].copy())
+            scale = problem.config.ptt_coefficient_scale
+            h.parameter_history.append(x[: problem.n_ptt] * scale)
 
     return record
 
@@ -1721,30 +1997,41 @@ def _initial_params_from(initial, problem):
     problem's zero-start values. The detector window may differ from the
     previous fit: the OPD lives in the pupil plane and positions are in
     arcsec, so only the fit mode and pupil sampling must match.
+
+    A pixel fit may also seed a ptt_pixel fit: its OPD is split into the 54
+    PTT coefficients and the orthogonal remainder. When the previous fit's
+    orientation is known and differs, y positions change sign (the image
+    is otherwise identical under the two conventions).
     """
     c = problem.config
+    orientation = None
     if isinstance(initial, FitResult):
         source, mode, label = initial.params, initial.config.fit_mode, "previous fit"
+        orientation = initial.config.orientation
     elif isinstance(initial, dict):
         source, mode, label = initial, None, "parameter dict"
     else:
         path = Path(initial).expanduser()
         with np.load(path) as saved:
             source = {k: saved[k] for k in saved.files}
-        mode = (
-            json.loads(str(source["config_json"]))["fit_mode"]
-            if "config_json" in source
-            else None
+        saved_config = (
+            json.loads(str(source["config_json"])) if "config_json" in source else {}
+        )
+        mode, orientation = saved_config.get("fit_mode"), saved_config.get(
+            "orientation"
         )
         label = path.name
     if mode is None:
         # final_params.npz and plain dicts carry no config; PTT fits are the
         # ones with explicit plane coefficients.
         mode = "ptt_pixel" if "bad_plane_nm" in source else "pixel"
-    if mode != c.fit_mode:
+    from_pixel = mode == "pixel" and c.fit_mode == "ptt_pixel"
+    if mode != c.fit_mode and not from_pixel:
         raise ValueError(f"Cannot warm-start a {c.fit_mode} fit from a {mode} fit")
     required = (
-        ("bad_plane_nm",) if c.fit_mode == "ptt_pixel" else ("aberrations_shared",)
+        ("bad_plane_nm",)
+        if c.fit_mode == "ptt_pixel" and not from_pixel
+        else ("aberrations_shared",)
     )
     missing = [k for k in required if k not in source]
     if missing:
@@ -1761,6 +2048,12 @@ def _initial_params_from(initial, problem):
                 f"{jnp.shape(params[key])} (check pupil_downsample_factor)"
             )
         params[key] = value
+    if orientation is not None and orientation != c.orientation:
+        for key in ("positions_wlp8_xy", "positions_wlm8_xy"):
+            params[key] = params[key] * jnp.asarray([1.0, -1.0])
+    if from_pixel:
+        coefficients, residual = problem.ptt_project(params["aberrations_shared"] * 1e9)
+        return problem.with_ptt(params, coefficients, residual), f"{label} (pixel fit)"
     if c.fit_mode == "ptt_pixel":
         coefficients = jnp.asarray(np.asarray(source["bad_plane_nm"]), jnp.float64)
         if coefficients.shape != (problem.n_ptt,):
@@ -1772,6 +2065,61 @@ def _initial_params_from(initial, problem):
                 raise ValueError("full_pixel_opd_nm does not match the pupil")
         params = problem.with_ptt(params, coefficients, pixel)
     return params, label
+
+
+def diagnose_mirror_changes(problem, result, reference, threshold_nm=None):
+    """Find the mirrors that moved between two fits (e.g. a segment tilt event).
+
+    problem is a ptt_pixel FitProblem, used for its mirror segmentation;
+    result and reference are fits of the same pupil, typically pixel-mode
+    fits of an epoch and of the one before it. Each mirror's OPD change is
+    projected onto its piston/tip/tilt, and the median change over mirrors
+    is removed: a common tip/tilt shifts every segment's sub-image together,
+    like an image translation, so fits trade it against the positions.
+    Mirrors whose remaining tip/tilt change, hypot(tip, tilt) in nm at the
+    mirror edge, exceeds threshold_nm (default 3x the median over mirrors)
+    are flagged. Piston is reported but not used: it is weakly constrained
+    by defocused images.
+
+    Returns dict(table=[row per mirror], flagged=(ids...), seeds={id:
+    [coefficients]}, threshold_nm), where seeds are result's own PTT
+    coefficients for the flagged mirrors, for fit_data(..., extra_seeds=...).
+    """
+    if problem.config.fit_mode != "ptt_pixel":
+        raise ValueError("diagnose_mirror_changes needs a ptt_pixel problem")
+    mask = np.asarray(problem.mirror_mask)
+
+    def ptt(opd):
+        return np.asarray(
+            problem.ptt_project(jnp.asarray(np.where(mask, opd, 0.0)))[0]
+        ).reshape(-1, 3)
+
+    result_ptt = ptt(np.asarray(result.opd_nm))
+    change = result_ptt - ptt(np.asarray(reference.opd_nm))
+    change -= np.median(change, axis=0)
+    tip_tilt = np.hypot(change[:, 1], change[:, 2])
+    if threshold_nm is None:
+        threshold_nm = 3 * float(np.median(tip_tilt))
+    table = [
+        dict(
+            mirror=pid,
+            tip_tilt_change_nm=float(tt),
+            piston_nm=float(c[0]),
+            tip_nm=float(c[1]),
+            tilt_nm=float(c[2]),
+            flagged=bool(tt > threshold_nm),
+        )
+        for pid, tt, c in zip(problem.physical_ids, tip_tilt, change)
+    ]
+    flagged = tuple(row["mirror"] for row in table if row["flagged"])
+    seeds = {
+        pid: [result_ptt[i]]
+        for i, pid in enumerate(problem.physical_ids)
+        if pid in flagged
+    }
+    return dict(
+        table=table, flagged=flagged, seeds=seeds, threshold_nm=float(threshold_nm)
+    )
 
 
 def fit_data(
@@ -1786,6 +2134,8 @@ def fit_data(
     output_dir=None,
     initial=None,
     refit_positions=True,
+    reseed=None,
+    extra_seeds=None,
 ):
     """Fit a pair from zero using 'pixel' (default) or 'ptt_pixel'.
 
@@ -1802,6 +2152,12 @@ def fit_data(
     fit of the four position parameters runs with the OPD held fixed,
     because pointing changes between epochs. Then only the final L-BFGS-B
     stage runs.
+
+    For a ptt_pixel warm start, reseed (physical mirror ids, or "all") instead
+    runs the full PTT stage sequence from initial, with the seed grid only for
+    those mirrors, each also seeded from its current coefficients; extra_seeds
+    maps ids to additional (piston, tip, tilt) seeds. With segment
+    propagation, reseeding a mirror costs about a second.
     """
     if data is not None:
         if any(p is not None for p in (wlp8_path, wlm8_path, pupil_path, filter_path)):
@@ -1834,7 +2190,18 @@ def fit_data(
         start = "zero initial OPD"
     print(f"CAMINO {c.fit_mode}: {c.fit_npix}x{c.fit_npix} cutouts; {start}")
     with problem.filter_context():
-        if initial is not None:
+        if initial is not None and reseed is not None:
+            if c.fit_mode != "ptt_pixel":
+                raise ValueError("reseed applies to ptt_pixel fits")
+            params = _run_ptt_initial_stages(
+                problem,
+                histories,
+                root,
+                from_params=params,
+                mirrors=set(problem.physical_ids if reseed == "all" else reseed),
+                extra_seeds=extra_seeds,
+            )
+        elif initial is not None:
             if refit_positions:
                 params = _run_positions(
                     problem,
@@ -1911,19 +2278,25 @@ def get_mast_wss_path(date, choice="closest", verbose=True):
     Requires stpsf's reference data. Network access may be used by stpsf. A local WSS path can instead be passed directly to
     compare_with_mast, with no lookup required. verbose prints stpsf's OPD
     query summary; download messages (which show local paths) are hidden.
+    The lookup is cached (see camino.data_utils.cached_lookup) and the file
+    kept in stpsf's data directory, so repeat calls need no network.
     """
     import stpsf
 
-    from .data_utils import hide_download_messages
+    from .data_utils import cached_lookup, hide_download_messages
 
-    with hide_download_messages():
-        filename = stpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=verbose)
-    direct = Path(filename).expanduser()
-    if direct.is_file():
-        return direct
-    path = Path(stpsf.utils.get_stpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
+    def query():
+        with hide_download_messages():
+            filename = stpsf.mast_wss.get_opd_at_time(
+                date, choice=choice, verbose=verbose
+            )
+        return Path(filename).name
+
+    name = cached_lookup("wss_opd", f"{date}|{choice}", query)
+    path = Path(stpsf.utils.get_stpsf_data_path()) / "MAST_JWST_WSS_OPDs" / name
     if not path.is_file():
-        raise FileNotFoundError(f"WSS product was identified but is not cached: {path}")
+        with hide_download_messages():
+            stpsf.mast_wss.mast_retrieve_opd(name)
     return path
 
 

@@ -64,7 +64,9 @@ extra_javascript:
 nav:
   - Home: index.md
   - Concepts & Workflow: concepts.md
-  - Worked Example: examples/worked_example.md
+  - Worked Examples:
+    - Pixel fit: examples/worked_example.md
+    - Per-mirror PTT fit: examples/ptt_worked_example.md
 
   - API:
     - CAMINO API:

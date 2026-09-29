@@ -1282,8 +1282,8 @@ class SinglePointFilterFit(ModelFit):
 
         return optics
 
-    # Forward model
-    def __call__(self, model, exposure):
+    def make_source(self, model, exposure):
+        """Return the point source (flux, position, spectrum) for an exposure."""
         source = self.source
         nw = self.nwavels
 
@@ -1330,7 +1330,11 @@ class SinglePointFilterFit(ModelFit):
         weights = filt * I
         weights = weights / (jnp.sum(weights) + 1e-12)  # PSF weights sum to 1
 
-        source = source.set("spectrum", dl.Spectrum(wv, weights))
+        return source.set("spectrum", dl.Spectrum(wv, weights))
+
+    # Forward model
+    def __call__(self, model, exposure):
+        source = self.make_source(model, exposure)
 
         # 4) Optics, PSF and shear
         optics = self.update_optics(model, exposure)
