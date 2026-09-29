@@ -1,9 +1,11 @@
-"""CAMINO single-pair wavefront fitting from a zero OPD.
+"""CAMINO single-pair wavefront fitting, from a zero OPD or a previous fit.
 
 Public entry points
 -------------------
 load_data(...) -> FitProblem: load a WLP8/WLM8 pair and build the model.
 fit_data(..., fit_mode="pixel" | "ptt_pixel") -> FitResult: run the fit.
+fit_data(..., initial=previous_result) -> FitResult: warm start. Skip the
+    initial stages, refit positions, then run only the final L-BFGS-B.
 continue_fit(result, maxiter=2000): continue the final L-BFGS-B stage.
 compare_with_mast(result, mast_wss_path): make the notebook comparison figure.
 
@@ -17,13 +19,17 @@ Example (no previous OPD is required or loaded)::
     result.plot_opd()
     # result.continue_fit(maxiter=2000)
     # result.compare_with_mast("official_wss.fits")
+    # next_result = fit_data(data=next_data, initial=result)
 
 Numerical conventions retained from the supplied notebooks
 ---------------------------------------------------------
-* pixel: 128-pixel detector cutouts, output flip on axis 1, scheduled
+* Detector cutout size is FitConfig.fit_npix (pixel: 128 by default,
+  ptt_pixel: 256); 256-pixel windows work in pixel mode with the same
+  stage-1 learning rates.
+* pixel: output flip on axis 1, scheduled
   SGD of defocus/positions (60 steps), then illuminated-pixel L-BFGS-B.
   QV is segment-wise on the piston-centred OPD in nm.
-* ptt_pixel: 256-pixel cutouts, pupil flip on axis 0; fixed defocus;
+* ptt_pixel: pupil flip on axis 0; fixed defocus;
   BFGS positions, sequential 27-seed/local bounded L-BFGS-B per mirror,
   joint PTT BFGS, position refit, then joint PTT/pixel L-BFGS-B.
   QV, L2 and global-slope regularisation act on the pixel residual only.
@@ -137,7 +143,7 @@ class FitConfig:
     """
 
     fit_mode: str = "pixel"
-    fit_npix: int | None = None
+    fit_npix: int | None = None  # detector window: 128 (pixel) / 256 (ptt_pixel)
     orientation: str | None = None
     defocus_nm: tuple[float, float] | None = None
     filter_name: str = "F212N"
@@ -1498,6 +1504,7 @@ class FitResult:
     _value_and_grad: Callable = field(repr=False)
     products: dict = field(default_factory=dict)
     objective_terms: dict = field(default_factory=dict)
+    initialisation: str = "zero"
 
     @property
     def config(self):
@@ -1663,6 +1670,7 @@ class FitResult:
             inputs=self.problem.paths,
             physical_ids=self.problem.physical_ids,
             runtime_seconds=self.runtime_seconds,
+            initialisation=self.initialisation,
             backend=jax.default_backend(),
             objective_terms=self.objective_terms,
             optimizer=dict(
@@ -1690,6 +1698,73 @@ def _record_final(problem):
     return record
 
 
+_WARM_START_KEYS = (
+    "aberrations_shared",
+    "positions_wlp8_xy",
+    "positions_wlm8_xy",
+    "defocus_wlp8_val",
+    "defocus_wlm8_val",
+    "pupil_delta",
+)
+
+
+def _initial_params_from(initial, problem):
+    """Return (params, label) to warm-start problem from a previous fit.
+
+    initial is a FitResult, a params dict, or a final_params.npz /
+    restart_state.npz path written by FitResult.save. Keys it lacks keep
+    problem's zero-start values. The detector window may differ from the
+    previous fit: the OPD lives in the pupil plane and positions are in
+    arcsec, so only the fit mode and pupil sampling must match.
+    """
+    c = problem.config
+    if isinstance(initial, FitResult):
+        source, mode, label = initial.params, initial.config.fit_mode, "previous fit"
+    elif isinstance(initial, dict):
+        source, mode, label = initial, None, "parameter dict"
+    else:
+        path = Path(initial).expanduser()
+        with np.load(path) as saved:
+            source = {k: saved[k] for k in saved.files}
+        mode = (
+            json.loads(str(source["config_json"]))["fit_mode"]
+            if "config_json" in source
+            else None
+        )
+        label = path.name
+    if mode is not None and mode != c.fit_mode:
+        raise ValueError(f"Cannot warm-start a {c.fit_mode} fit from a {mode} fit")
+    required = (
+        ("bad_plane_nm",) if c.fit_mode == "ptt_pixel" else ("aberrations_shared",)
+    )
+    missing = [k for k in required if k not in source]
+    if missing:
+        raise ValueError(f"Warm start is missing {missing}")
+
+    params = dict(problem.initial_params)
+    for key in _WARM_START_KEYS:
+        if key not in source:
+            continue
+        value = jnp.asarray(np.asarray(source[key]), dtype=jnp.float64)
+        if value.shape != jnp.shape(params[key]):
+            raise ValueError(
+                f"Warm-start {key} has shape {value.shape}; this problem needs "
+                f"{jnp.shape(params[key])} (check pupil_downsample_factor)"
+            )
+        params[key] = value
+    if c.fit_mode == "ptt_pixel":
+        coefficients = jnp.asarray(np.asarray(source["bad_plane_nm"]), jnp.float64)
+        if coefficients.shape != (problem.n_ptt,):
+            raise ValueError(f"bad_plane_nm must have {problem.n_ptt} entries")
+        pixel = source.get("full_pixel_opd_nm")
+        if pixel is not None:
+            pixel = jnp.asarray(np.asarray(pixel), jnp.float64)
+            if pixel.shape != problem.mirror_mask.shape:
+                raise ValueError("full_pixel_opd_nm does not match the pupil")
+        params = problem.with_ptt(params, coefficients, pixel)
+    return params, label
+
+
 def fit_data(
     wlp8_path=None,
     wlm8_path=None,
@@ -1700,6 +1775,8 @@ def fit_data(
     config=None,
     data=None,
     output_dir=None,
+    initial=None,
+    refit_positions=True,
 ):
     """Fit a pair from zero using 'pixel' (default) or 'ptt_pixel'.
 
@@ -1709,6 +1786,13 @@ def fit_data(
     per-stage checkpoints and final saving; otherwise nothing is written.
     Final-stage maxiter is a budget, not an instruction to stop only upon
     convergence. Inspect result.scipy_result.message or continue the fit.
+
+    initial warm-starts from a previous fit instead of zero: a FitResult,
+    a params dict, or a saved final_params.npz / restart_state.npz. The
+    initial stages are skipped; with refit_positions (default) a short BFGS
+    fit of the four position parameters runs with the OPD held fixed,
+    because pointing changes between epochs. Then only the final L-BFGS-B
+    stage runs.
     """
     if data is not None:
         if any(p is not None for p in (wlp8_path, wlm8_path, pupil_path, filter_path)):
@@ -1734,9 +1818,24 @@ def fit_data(
     root = Path(output_dir).expanduser() if output_dir is not None else None
     histories = []
     started = time.perf_counter()
-    print(f"CAMINO {c.fit_mode}: {c.fit_npix}x{c.fit_npix} cutouts; zero initial OPD")
+    if initial is not None:
+        params, label = _initial_params_from(initial, problem)
+        start = f"warm start from {label}"
+    else:
+        start = "zero initial OPD"
+    print(f"CAMINO {c.fit_mode}: {c.fit_npix}x{c.fit_npix} cutouts; {start}")
     with problem.filter_context():
-        if c.fit_mode == "pixel":
+        if initial is not None:
+            if refit_positions:
+                params = _run_positions(
+                    problem,
+                    params,
+                    histories,
+                    c.position_refit_maxiter,
+                    "Warm start — BFGS position refit",
+                )
+            _checkpoint(problem, params, histories, root, "warm_start")
+        elif c.fit_mode == "pixel":
             params = _run_pixel_initial_stage(problem, histories)
             _checkpoint(problem, params, histories, root, "stage1")
         else:
@@ -1761,6 +1860,7 @@ def fit_data(
         time.perf_counter() - started,
         unpack,
         evaluate,
+        initialisation="zero" if initial is None else "warm",
     )
     result.refresh()
     if root is not None:
