@@ -14,3 +14,8 @@ docs/examples/*_files/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# jax.profiler traces and local notebook run outputs (data, checkpoints)
+notebooks/profiles/
+notebooks/*_pixel/
+notebooks/*_pttpixel/
