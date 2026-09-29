@@ -928,7 +928,7 @@ class NIRCamExposure(zdx.Base):
     err: Array
     bad: Array
 
-    fit: object = eqx.field(static=True)
+    fit: object  # a ModelFit; not static because its source holds JAX arrays
 
     def __init__(self, filename, name, filter, data, mjd, err, fit, bad):
         """
@@ -1184,7 +1184,7 @@ LOG10 = jnp.log(10.0)
 class SinglePointFilterFit(ModelFit):
     """Pixel-basis fitter for point-source PSFs."""
 
-    source: dl.Telescope = eqx.field(static=True)
+    source: dl.PointSource  # holds JAX arrays, so it must not be static
     nwavels: int = eqx.field(static=True)
 
     def __init__(self, nwavels: int = 1):
