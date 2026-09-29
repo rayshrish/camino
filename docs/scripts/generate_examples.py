@@ -19,6 +19,7 @@ EXAMPLES_ROOT = ROOT / "docs" / "examples"
 # notebook (relative to the repo root) -> docs page name (without .md)
 NOTEBOOKS = {
     "notebooks/camino_pixel_fit.ipynb": "worked_example",
+    "notebooks/camino_ptt_pixel_fit.ipynb": "ptt_worked_example",
 }
 
 
