@@ -131,3 +131,26 @@ def test_cached_lookup_does_not_cache_failures(tmp_path, monkeypatch):
     assert (
         cached_lookup("wss_opd", "2022-07-13|closest", lambda: "ok.fits") == "ok.fits"
     )
+
+
+def _write_entries(args):
+    cache_dir, worker = args
+    import os
+
+    os.environ["CAMINO_CACHE_DIR"] = cache_dir
+    from camino.data_utils import cached_lookup
+
+    for i in range(15):
+        cached_lookup("stress", f"{worker}-{i}", lambda: [worker, i])
+
+
+def test_cached_lookup_keeps_concurrent_writers_entries(tmp_path):
+    import json
+    import multiprocessing
+
+    with multiprocessing.get_context("spawn").Pool(4) as pool:
+        pool.map(_write_entries, [(str(tmp_path), w) for w in range(4)])
+
+    cache = json.loads((tmp_path / "mast_lookups.json").read_text())
+    assert len(cache["stress"]) == 60
+    assert not list(tmp_path.glob("*.tmp"))

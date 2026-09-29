@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import warnings
 from contextlib import contextmanager, redirect_stdout
 from datetime import date as Date
@@ -46,6 +47,37 @@ def _cache_file() -> Path:
     return Path(root) / "mast_lookups.json"
 
 
+@contextmanager
+def _file_lock(path: Path):
+    """Exclusive inter-process lock held on a sidecar lock file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _read_cache(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 def cached_lookup(kind: str, key: str, compute):
     """Return compute() for (kind, key), caching the JSON result on disk.
 
@@ -53,20 +85,25 @@ def cached_lookup(kind: str, key: str, compute):
     ~/.cache/camino/mast_lookups.json (or $CAMINO_CACHE_DIR) and later runs,
     including the example notebooks, need no network once files are local.
     Delete the file to clear the cache. Failures are not cached.
+
+    Safe across processes: the network call runs unlocked, then the
+    read/merge/write runs under an exclusive lock and replaces the file
+    atomically from a unique temporary file, so concurrent writers keep
+    each other's entries.
     """
     path = _cache_file()
-    try:
-        cache = json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        cache = {}
+    cache = _read_cache(path)
     if key in cache.get(kind, {}):
         return cache[kind][key]
     value = compute()
-    cache.setdefault(kind, {})[key] = value
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cache, indent=1))
-    tmp.replace(path)
+    with _file_lock(path.with_suffix(".lock")):
+        cache = _read_cache(path)  # merge entries other processes wrote
+        cache.setdefault(kind, {})[key] = value
+        with tempfile.NamedTemporaryFile(
+            "w", dir=path.parent, prefix=path.name, suffix=".tmp", delete=False
+        ) as tmp:
+            json.dump(cache, tmp, indent=1)
+        os.replace(tmp.name, path)
     return value
 
 

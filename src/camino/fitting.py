@@ -555,6 +555,10 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
         phase factors) even when only the PSF is used; that path is kept for
         return_wf=True.
         """
+        if return_wf and return_psf:
+            raise ValueError(
+                "return_wf and return_psf cannot both be True. Please choose one."
+            )
         if return_wf:
             return super().propagate(wavelengths, offset, weights, return_wf=True)
         wavelengths = jnp.atleast_1d(wavelengths)

@@ -101,3 +101,10 @@ def test_direct_psf_matches_dlux_wavefront_path():
 
     np.testing.assert_allclose(direct.data, wavefronts.psf.sum(0), rtol=1e-12)
     np.testing.assert_allclose(direct.pixel_scale, wavefronts.pixel_scale.mean())
+
+
+def test_propagate_rejects_both_return_flags():
+    pupil, _ = _pupil()
+
+    with pytest.raises(ValueError, match="cannot both be True"):
+        _optics(pupil).propagate(WAVELENGTH, OFFSET, return_wf=True, return_psf=True)
