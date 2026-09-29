@@ -4,17 +4,17 @@
 [![Docs](https://img.shields.io/badge/docs-Zensical-blue)](https://rayshrish.github.io/camino/)
 [![CI](https://github.com/rayshrish/camino/actions/workflows/documentation.yml/badge.svg)](https://github.com/rayshrish/camino/actions/workflows/documentation.yml)
 
-CAMINO is a JAX-based package for modelling and inferring wavefront aberrations and JWST/NIRCam PSF behaviour.
+`camino` is a JAX-based package for modelling and inferring JWST wavefront aberrations from NIRCam defocused imaging.
 
 Contributors: [Shrishmoy Ray](https://github.com/rayshrish), [Benjamin Pope](https://github.com/benjaminpope)
 
 ## What is camino?
 
-camino is a Python package for modelling optical propagation, wavefront aberrations, and JWST/NIRCam-style inference workflows using JAX autodiff and dLux optics primitives.
+`camino` is a Python package for modelling optical propagation, wavefront aberrations, and JWST/NIRCam-style inference workflows using JAX autodiff and dLux optics primitives.
 
 ## Installation
 
-The package is currently being prepared for publication under the distribution name `jwst-camino`, while the import name remains `camino`.
+The package is distributed under `jwst-camino`, while the import name remains `camino`:
 
 ```bash
 pip install jwst-camino
@@ -29,10 +29,6 @@ python -m pip install -e .
 ```
 
 We recommend using a virtual environment to avoid dependency conflicts.
-
-## Use & Documentation
-
-The project documentation is being assembled in the `docs/` tree and includes placeholders for the landing page, concepts page, worked example, and API reference.
 
 ## Collaboration & Development
 
