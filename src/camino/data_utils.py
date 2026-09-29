@@ -7,7 +7,7 @@ This module condenses the workflow from:
 
 Public usage
 ------------
-from wlp8_wlm8_download import download_wlp8_wlm8
+from camino.data_utils import download_wlp8_wlm8
 
 wlp8_path, wlm8_path = download_wlp8_wlm8("2022-07-13")
 
@@ -30,7 +30,6 @@ from typing import Any
 import stpsf
 from astropy.io import fits
 from astroquery.mast import MastMissions
-
 
 _MAST = MastMissions(mission="jwst")
 

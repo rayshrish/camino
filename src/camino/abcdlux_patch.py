@@ -3,6 +3,7 @@
 Patched ABCD / LCT / MFT code for camino.
 Authors: Louis, Hayden, Shrish.
 """
+
 from __future__ import annotations
 
 import jax.numpy as np
@@ -415,6 +416,3 @@ def propagate_mono_abcd(self, wavelength, offset=np.zeros(2), return_wf=False):
     if return_wf:
         return wf_out
     return wf_out.psf
-
-
-print("abcdlux_patch module loaded successfully")

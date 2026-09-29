@@ -9,7 +9,7 @@ compare_with_mast(result, mast_wss_path): make the notebook comparison figure.
 
 Example (no previous OPD is required or loaded)::
 
-    from fitting import FitConfig, load_data, fit_data
+    from camino.fitting import FitConfig, load_data, fit_data
     config = FitConfig.for_mode("ptt_pixel", stage2_maxiter=6000)
     data = load_data("plus.fits", "minus.fits", pupil_path="pupil.fits",
                      filter_path="F212N.dat", config=config)
@@ -37,9 +37,8 @@ Numerical conventions retained from the supplied notebooks
 * Pupil amplitude remains frozen; flux/background are solved analytically.
 * Continuation starts at the latest parameters with fresh L-BFGS memory.
 
-Dependencies: the user's camino.py and abcdlux_patch.py, JAX, Equinox, dLux,
-Optax, NumPy, SciPy, Astropy, scikit-image, Matplotlib and tqdm. This module
-also supports sibling camino/abcdlux_patch modules in a package. It does
+Dependencies: camino.core and camino.abcdlux_patch, JAX, Equinox, dLux,
+Optax, NumPy, SciPy, Astropy, scikit-image, Matplotlib and tqdm. It does
 not execute fits, read data or select a Matplotlib backend at import time.
 JAX float64 is enabled by load_data, as required by both source notebooks.
 The existing CAMINO throughput API needs a temporary module patch; calls
@@ -83,12 +82,8 @@ from jax import Array
 from skimage import measure
 from tqdm.auto import tqdm
 
-if __package__:
-    from . import camino as cam
-    from . import abcdlux_patch as abcdlux
-else:
-    import camino as cam
-    import abcdlux_patch as abcdlux
+from . import abcdlux_patch as abcdlux
+from . import core as cam
 
 onp = np
 EPS = 1e-30
@@ -352,7 +347,7 @@ def _local_filter(filter_path, filter_name, fit_mode):
         else:
             # Preserve the PTT notebook's use of CAMINO's own throughput method.
             def local_throughput(filt, nwavels=1):
-                path = str(filter_path) if str(filt) == filter_name else filt
+                path = Path(filter_path) if str(filt) == filter_name else filt
                 return original_unwrapped(path, nwavels=nwavels)
 
         cam.calc_throughput = local_throughput
@@ -993,10 +988,10 @@ def load_data(
     from importlib.resources import files
 
     if pupil_path is None:
-        pupil_path = files("camino_data") / "jwst_pupil_flight_npix1024.fits"
+        pupil_path = files("camino").joinpath("data", "jwst_pupil_flight_npix1024.fits")
 
     if filter_path is None:
-        filter_path = files("camino_data") / "F212N.dat"
+        filter_path = files("camino").joinpath("data", "F212N.dat")
 
     c = _resolve_config(fit_mode, config)
     paths = {
@@ -1750,21 +1745,18 @@ def continue_fit(result, maxiter=2000):
 
 
 def get_mast_wss_path(date, choice="closest"):
-    """Resolve the official WSS product using the notebook's WebbPSF API.
+    """Resolve the official WSS product using the stpsf (formerly WebbPSF) API.
 
-    Optional dependency: webbpsf and its reference data. Network access may
-    be used by WebbPSF. A local WSS path can instead be passed directly to
+    Requires stpsf's reference data. Network access may be used by stpsf. A local WSS path can instead be passed directly to
     compare_with_mast, with no lookup required.
     """
-    import webbpsf
+    import stpsf
 
-    filename = webbpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=True)
+    filename = stpsf.mast_wss.get_opd_at_time(date, choice=choice, verbose=True)
     direct = Path(filename).expanduser()
     if direct.is_file():
         return direct
-    path = (
-        Path(webbpsf.utils.get_webbpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
-    )
+    path = Path(stpsf.utils.get_stpsf_data_path()) / "MAST_JWST_WSS_OPDs" / direct.name
     if not path.is_file():
         raise FileNotFoundError(f"WSS product was identified but is not cached: {path}")
     return path

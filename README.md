@@ -14,7 +14,7 @@ camino is a Python package for modelling optical propagation, wavefront aberrati
 
 ## Installation
 
-The package is currently being prepared for publication under the distribution name `jwst-camino`, while the import name remains `camino`.
+CAMINO is published on PyPI as `jwst-camino`; the import name is `camino`.
 
 ```bash
 pip install jwst-camino
@@ -23,12 +23,25 @@ pip install jwst-camino
 You can also build from source:
 
 ```bash
-git clone https://github.com/your-org/camino.git
+git clone https://github.com/rayshrish/camino.git
 cd camino
-python -m pip install -e .
+python -m pip install -e ".[dev]"
+python -m pytest
 ```
 
 We recommend using a virtual environment to avoid dependency conflicts.
+
+## Usage
+
+```python
+import camino                                    # core optics, exposures and diagnostics
+from camino.fitting import FitConfig, load_data, fit_data
+from camino.data_utils import download_wlp8_wlm8  # MAST download helpers
+
+wv, weights = camino.calc_throughput("F212N", nwavels=5)
+```
+
+The source lives in `src/camino/`; bundled pupil and filter data are in `src/camino/data/`.
 
 ## Use & Documentation
 

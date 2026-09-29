@@ -99,3 +99,19 @@ def test_jwst_primary_normalises_with_jax_norm():
     assert isinstance(out["amplitude"], jax.Array)
     assert out["amplitude"].dtype == jnp.float64
     assert jnp.isclose(jnp.linalg.norm(out["amplitude"]), 1.0)
+
+
+def test_map_coordinates_2d_cubic_reproduces_quadratic_in_interior():
+    rows, cols = jnp.indices((8, 8), dtype=jnp.float64)
+    img = rows**2 + 0.5 * cols
+    coords = jnp.stack(
+        jnp.meshgrid(
+            jnp.linspace(2.0, 5.0, 7), jnp.linspace(2.0, 5.0, 7), indexing="ij"
+        )
+    )
+
+    out = camino.map_coordinates_2d(img, coords, order=3, mode="constant", cval=0.0)
+
+    expected = coords[0] ** 2 + 0.5 * coords[1]
+    assert out.dtype == jnp.float64
+    assert jnp.allclose(out, expected)
