@@ -29,23 +29,11 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-We recommend using a virtual environment to avoid dependency conflicts.
-
-## Usage
-
-```python
-import camino                                    # core optics, exposures and diagnostics
-from camino.fitting import FitConfig, load_data, fit_data
-from camino.data_utils import download_wlp8_wlm8  # MAST download helpers
-
-wv, weights = camino.calc_throughput("F212N", nwavels=5)
-```
-
-The source lives in `src/camino/`; bundled pupil and filter data are in `src/camino/data/`.
+We recommend using a virtual environment such as in `uv` or `conda` to avoid dependency conflicts.
 
 ## Use & Documentation
 
-The project documentation is being assembled in the `docs/` tree and includes placeholders for the landing page, concepts page, worked example, and API reference.
+The project documentation is available at [rayshrish.github.io/camino](https://rayshrish.github.io/camino/), including worked examples, implementation details, and API docs.
 
 ## Collaboration & Development
 
