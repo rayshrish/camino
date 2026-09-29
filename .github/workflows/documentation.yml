@@ -35,6 +35,9 @@ jobs:
       - name: Generate API documentation pages
         run: python docs/scripts/generate_api_mds.py
 
+      - name: Render example notebooks
+        run: python docs/scripts/generate_examples.py
+
       - name: Build documentation with Zensical
         run: zensical build -f mkdocs.yml --strict
 
