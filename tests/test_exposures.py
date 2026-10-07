@@ -1,5 +1,7 @@
 """Header handling in exposure_from_defocus_file."""
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import camino
@@ -56,3 +58,25 @@ def test_exposure_cutouts_match_requested_crop(defocus_fits, crop):
     assert exp.data.shape == (crop, crop)
     assert exp.err.shape == (crop, crop)
     assert exp.bad.shape == (crop, crop)
+
+
+def test_exposure_bad_mask_is_bool_nan_or_above_threshold(defocus_fits):
+    path = defocus_fits()
+
+    exp = camino.exposure_from_defocus_file(str(path), None, threshold=100.0, crop=16)
+
+    assert exp.bad.dtype == bool
+    assert exp.bad.any()
+    assert np.array_equal(exp.bad, jnp.isnan(exp.data))
+    assert np.all(jnp.isnan(exp.err[exp.bad]))
+
+
+def test_scale_ls_const_bg_unweighted_counts_good_pixels():
+    psf = jnp.arange(1.0, 17.0).reshape(4, 4)
+    bad = jnp.zeros((4, 4), dtype=bool).at[0, 0].set(True).at[3, 3].set(True)
+    img = 3.0 * psf + 5.0
+
+    f, b = camino.scale_ls_const_bg_unweighted(img, psf, bad)
+
+    assert f == pytest.approx(3.0)
+    assert b == pytest.approx(5.0)

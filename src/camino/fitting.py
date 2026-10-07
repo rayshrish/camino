@@ -718,14 +718,6 @@ def init_params(exposures, optics, defocus_nm):
     return params_start, keys
 
 
-def patch_modelparams_contains():
-    cam.ModelParams.__contains__ = cam._mp_contains
-    cam.ModelParams.__iter__ = cam._mp_iter
-    cam.ModelParams.__len__ = cam._mp_len
-    cam.ModelParams.keys = cam._mp_keys
-    cam.ModelParams.items = cam._mp_items
-
-
 def build_full_params(train_params, params_template, exposures):
     p = params_template
 
@@ -1257,7 +1249,6 @@ def load_data(
                     f"{pup}: filter {exp.filter!r} differs from {c.filter_name!r}"
                 )
         params, _ = init_params(exposures, optics, c.defocus_nm)
-        patch_modelparams_contains()
         template = cam.ModelParams(params)
         model = NIRCamModel(
             list(exposures.values()),
