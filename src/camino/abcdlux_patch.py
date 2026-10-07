@@ -149,13 +149,11 @@ def unpack_coord_spec(spec: Array | tuple) -> tuple[Array, Array]:
 # ============================================================
 
 
-def r2_coords(spec_in: Array | tuple) -> Array:
-    x, y = unpack_coord_spec(spec_in)
-    return (y**2)[:, None] + (x**2)[None, :]
-
-
 def quad_phase(coords: Array | tuple, lam: float, curv: float | Array) -> Array:
-    return np.exp(1j * np.pi * curv * r2_coords(coords) / lam)
+    x, y = unpack_coord_spec(coords)
+    chirp_x = np.exp(1j * np.pi * curv * x**2 / lam)
+    chirp_y = np.exp(1j * np.pi * curv * y**2 / lam)
+    return chirp_y[:, None] * chirp_x[None, :]
 
 
 def apply_curv(
@@ -172,7 +170,12 @@ def remove_curv(
 
 def propagate_curv(ABCD: Array, curv_in: float | Array) -> Array:
     a, b, c, d = ABCD.flatten()
-    return (c + d * curv_in) / (a + b * curv_in)
+    denom = a + b * curv_in
+    at_focus = np.abs(denom) < 1e-8
+    safe_denom = np.where(at_focus, 1.0, denom)
+    # At focus the physical curvature diverges; d/b is the cancel-mode choice
+    # and still gives an exact factorisation.
+    return np.where(at_focus, d / b, (c + d * curv_in) / safe_denom)
 
 
 def residual_abcd(ABCD: Array, curv_in: float, curv_out: float) -> Array:
@@ -300,11 +303,8 @@ def lct_kernels(
 
     a, b, c, d = ABCD.flatten()
 
-    r2_in = r2_coords((x_in, y_in))
-    r2_out = r2_coords((x_out, y_out))
-
-    pre = np.exp(1j * np.pi * a * r2_in / (lam * b))
-    post = np.exp(1j * np.pi * d * r2_out / (lam * b))
+    pre = quad_phase((x_in, y_in), lam, a / b)
+    post = quad_phase((x_out, y_out), lam, d / b)
 
     dx_in = x_in[1] - x_in[0]
     dy_in = y_in[1] - y_in[0]
@@ -379,50 +379,3 @@ def lct_prop(
         return u_res_out
 
     return apply_curv(u_res_out, spec_out, lam, curv_out)
-
-
-# ============================================================
-# A helper for model class (ABCD version)
-# ============================================================
-
-
-def propagate_mono_abcd(self, wavelength, offset=np.zeros(2), return_wf=False):
-    import dLux as dl  # keep local
-
-    wf = dl.Wavefront(self.wf_npixels, self.diameter, wavelength).tilt(offset)
-
-    for layer in list(self.layers.values()):
-        wf *= layer
-
-    u_in = wf.phasor
-
-    fl = self.fnumber * self.diameter  # meters
-
-    # If your existing code uses self.defocus in nm, convert:
-    z_defocus = self.defocus * 1e-9
-
-    abcd = compose_abcd([abcd_lens(fl), abcd_free_space(fl + z_defocus)])
-
-    # Input sampling (pupil plane)
-    N_in = self.wf_npixels
-    dx_in = self.diameter / self.wf_npixels
-    x_in = dlu.nd_coords(N_in, dx_in)
-
-    # Output sampling: match your existing psf_pixel_scale (angular) via x = f * theta
-    true_pixel_scale = self.psf_pixel_scale / self.oversample  # arcsec/pix
-    theta_pix = dlu.arcsec2rad(true_pixel_scale)  # rad/pix
-
-    N_out = self.psf_npixels * self.oversample
-    dx_out = fl * theta_pix  # meters/pix at focal plane
-
-    x_out = dlu.nd_coords(N_out, dx_out)
-
-    u_out = lct_prop_basic(u_in, x_in, x_out, wavelength, abcd)
-
-    wf_out = dl.Wavefront(N_out, N_out * dx_out, wavelength).set(
-        ["amplitude", "phase"], [np.abs(u_out), np.angle(u_out)]
-    )
-
-    if return_wf:
-        return wf_out
-    return wf_out.psf

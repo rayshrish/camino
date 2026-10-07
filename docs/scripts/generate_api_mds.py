@@ -124,7 +124,6 @@ MODULE_GROUPS = {
         (
             "curvature",
             [
-                "r2_coords",
                 "quad_phase",
                 "apply_curv",
                 "remove_curv",
@@ -143,7 +142,6 @@ MODULE_GROUPS = {
                 "lct_kernel_prop",
                 "lct_prop_basic",
                 "lct_prop",
-                "propagate_mono_abcd",
             ],
         ),
     ],
