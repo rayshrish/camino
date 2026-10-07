@@ -337,33 +337,20 @@ def extract_cutout(img, center, size, fill_value=None):
     y0i, x0i = int(round(y0)), int(round(x0))
     # Asymmetric halves so odd sizes still return exactly `size` pixels.
     half_lo = size // 2
-    half_hi = size - half_lo
+    y1, x1 = y0i - half_lo, x0i - half_lo
+    y2, x2 = y1 + size, x1 + size
 
-    y1, y2 = y0i - half_lo, y0i + half_hi
-    x1, x2 = x0i - half_lo, x0i + half_hi
-
-    if fill_value is None:
-        fill_value = onp.nanmedian(img)
-
-    pad_y1 = max(0, -y1)
-    pad_x1 = max(0, -x1)
-    pad_y2 = max(0, y2 - img.shape[0])
-    pad_x2 = max(0, x2 - img.shape[1])
-
-    y1c = max(0, y1)
-    y2c = min(img.shape[0], y2)
-    x1c = max(0, x1)
-    x2c = min(img.shape[1], x2)
-
-    cut = img[y1c:y2c, x1c:x2c]
-
-    if any(p > 0 for p in [pad_y1, pad_y2, pad_x1, pad_x2]):
-        cut = onp.pad(
-            cut,
-            ((pad_y1, pad_y2), (pad_x1, pad_x2)),
-            mode="constant",
-            constant_values=fill_value,
-        )
+    ny, nx = img.shape
+    if y1 < 0 or x1 < 0 or y2 > ny or x2 > nx:
+        if fill_value is None:
+            fill_value = onp.nanmedian(img)
+        cut = onp.full((size, size), fill_value, dtype=img.dtype)
+        sy1, sy2 = max(y1, 0), min(y2, ny)
+        sx1, sx2 = max(x1, 0), min(x2, nx)
+        if sy1 < sy2 and sx1 < sx2:
+            cut[sy1 - y1 : sy2 - y1, sx1 - x1 : sx2 - x1] = img[sy1:sy2, sx1:sx2]
+    else:
+        cut = img[y1:y2, x1:x2]
 
     return cut, (y1, x1)
 
@@ -461,59 +448,8 @@ def cutout_around_defocused_psf(img, size=128, smooth_sigma=2.0, thresh_sigma=5.
     smooth_sigma: Gaussian smoothing for robust centroiding
     thresh_sigma: threshold relative to background MAD (robust)
     """
-    img = onp.asarray(img)
-
-    # Robust background estimate (median + MAD)
-    med = onp.nanmedian(img)
-    mad = onp.nanmedian(onp.abs(img - med)) + 1e-12
-    sigma = 1.4826 * mad
-
-    # Smooth to suppress speckles/hot pixels
-    sm = gaussian_filter(onp.nan_to_num(img - med, nan=0.0), smooth_sigma)
-
-    # Mask: keep only significant flux
-    mask = sm > (thresh_sigma * sigma)
-
-    # If threshold is too strict, relax it
-    if mask.sum() < 50:
-        mask = sm > (3.0 * sigma)
-    if mask.sum() < 10:
-        # Fallback: just take brightest pixel in smoothed image
-        y0, x0 = onp.unravel_index(onp.argmax(sm), sm.shape)
-    else:
-        # Weighted centroid on masked region
-        weights = onp.where(mask, sm, 0.0)
-        y0, x0 = center_of_mass(weights)
-
-    # Integer center for cutout indexing
-    y0i, x0i = int(round(y0)), int(round(x0))
-
-    # Asymmetric halves so odd sizes still return exactly `size` pixels.
-    half_lo = size // 2
-    half_hi = size - half_lo
-    y1, y2 = y0i - half_lo, y0i + half_hi
-    x1, x2 = x0i - half_lo, x0i + half_hi
-
-    # Pad if near edges
-    pad_y1 = max(0, -y1)
-    pad_x1 = max(0, -x1)
-    pad_y2 = max(0, y2 - img.shape[0])
-    pad_x2 = max(0, x2 - img.shape[1])
-
-    y1 = max(0, y1)
-    x1 = max(0, x1)
-    y2 = min(img.shape[0], y2)
-    x2 = min(img.shape[1], x2)
-
-    cut = img[y1:y2, x1:x2]
-    if any(p > 0 for p in [pad_y1, pad_y2, pad_x1, pad_x2]):
-        cut = onp.pad(
-            cut,
-            ((pad_y1, pad_y2), (pad_x1, pad_x2)),
-            mode="constant",
-            constant_values=med,
-        )
-
+    y0, x0 = estimate_center(img, smooth_sigma, thresh_sigma)
+    cut, _ = extract_cutout(img, (y0, x0), size)
     return cut, (y0, x0)
 
 
@@ -963,9 +899,7 @@ def exposure_from_defocus_file(fname, fit, threshold=12000, crop=128):
         data = jnp.asarray(data, dtype=float)
         err = jnp.asarray(err, dtype=float)
 
-        threshold_map = jnp.where(data > threshold, 1, 0)
-        bad_data = jnp.isnan(data)
-        bad = bad_data + threshold_map
+        bad = jnp.isnan(data) | (data > threshold)
 
         err = jnp.where(bad, jnp.nan, err)
         data = jnp.where(bad, jnp.nan, data)
@@ -1391,6 +1325,8 @@ class BaseModeller(zdx.Base):
 
     def __getattr__(self, key):
         """Resolve parameter values without forcing a custom __getattribute__ path."""
+        if key == "params" or key.startswith("__"):
+            raise AttributeError(key)
         if key in self.params:
             return self.params[key]
         for k, val in self.params.items():
@@ -1427,21 +1363,27 @@ class ModelParams(BaseModeller):
         return self.params[key]
 
     def __getattr__(self, key):
-
+        if key == "params" or key.startswith("__"):
+            raise AttributeError(key)
         # Make the object act like a real dictionary
         if hasattr(self.params, key):
             return getattr(self.params, key)
+        return super().__getattr__(key)
 
-        if key in self.params.keys():
-            return self.params[key]
+    def __contains__(self, key):
+        return key in self.params
 
-        for sub_key, val in self.params.items():
-            if hasattr(val, key):
-                return getattr(val, key)
+    def __iter__(self):
+        return iter(self.params)
 
-        raise AttributeError(
-            f"Attribute {key} not found in params of {self.__class__.__name__} object"
-        )
+    def __len__(self):
+        return len(self.params)
+
+    def keys(self):
+        return self.params.keys()
+
+    def items(self):
+        return self.params.items()
 
     def replace(self, values):
         # Takes in a super-set class and updates this class with input values
@@ -1808,24 +1750,3 @@ def gaussian_smooth_nan_jax_static(img, sigma=2.0, truncate=4.0):
     out = img_s / jnp.maximum(w_s, 1e-12)
     out = jnp.where(m, out, jnp.nan)
     return out
-
-
-# Dict-protocol helpers that fitting.py patches onto ModelParams.
-def _mp_contains(self, k):
-    return k in self.params
-
-
-def _mp_iter(self):
-    return iter(self.params)
-
-
-def _mp_len(self):
-    return len(self.params)
-
-
-def _mp_keys(self):
-    return self.params.keys()
-
-
-def _mp_items(self):
-    return self.params.items()

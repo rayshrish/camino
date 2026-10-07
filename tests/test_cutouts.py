@@ -82,3 +82,40 @@ def test_cutout_around_defocused_psf_multi_returns_requested_size(donut_image, s
 
     assert cut.shape == (size, size)
     assert np.isfinite(centre).all()
+
+
+@pytest.mark.parametrize(
+    "center",
+    [(-20, 10), (10, -20), (10, 80), (80, 10)],
+    ids=["top", "left", "right", "bottom"],
+)
+def test_extract_cutout_fully_off_frame_is_all_fill(center):
+    img = np.ones((32, 32))
+
+    cut, _ = camino.extract_cutout(img, center, 8, fill_value=-1.0)
+
+    assert cut.shape == (8, 8)
+    assert np.all(cut == -1.0)
+
+
+def test_extract_cutout_fully_off_frame_defaults_to_nanmedian():
+    img = np.full((32, 32), 2.0)
+
+    cut, _ = camino.extract_cutout(img, (-50, -50), 6)
+
+    assert np.all(cut == 2.0)
+
+
+def test_extract_cutout_keeps_dtype():
+    img = np.ones((16, 16), dtype=np.float32)
+
+    inside, _ = camino.extract_cutout(img, (8, 8), 4)
+    outside, _ = camino.extract_cutout(img, (0, 0), 4)
+
+    assert inside.dtype == outside.dtype == np.float32
+
+
+def test_cutout_around_defocused_psf_larger_than_frame_pads(donut_image):
+    cut, _ = camino.cutout_around_defocused_psf(donut_image, size=100)
+
+    assert cut.shape == (100, 100)
