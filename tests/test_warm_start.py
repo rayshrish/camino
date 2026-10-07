@@ -263,3 +263,14 @@ def test_scaled_ptt_coefficients_round_trip_in_final_stage():
     np.testing.assert_allclose(
         unpack(jnp.asarray(x0))["bad_plane_nm"], base["bad_plane_nm"]
     )
+
+
+@pytest.mark.parametrize("sign", [0, 2, -2.0, np.nan])
+def test_opd_phase_sign_must_be_plus_or_minus_one(sign):
+    with pytest.raises(ValueError, match="opd_phase_sign"):
+        FitConfig.for_mode("pixel", opd_phase_sign=sign)
+
+
+@pytest.mark.parametrize("sign", [-1.0, 1, 1.0])
+def test_opd_phase_sign_accepts_plus_or_minus_one(sign):
+    assert FitConfig.for_mode("pixel", opd_phase_sign=sign).opd_phase_sign == sign

@@ -30,7 +30,7 @@ Numerical conventions retained from the supplied notebooks
 * Detector cutout size is FitConfig.fit_npix (pixel: 128 by default,
   ptt_pixel: 256); 256-pixel windows work in pixel mode with the same
   stage-1 learning rates.
-* pixel: output flip on axis 1, scheduled
+* pixel: output flip on axis 0, scheduled
   SGD of defocus/positions (60 steps), then illuminated-pixel L-BFGS-B.
   QV is segment-wise on the piston-centred OPD in nm.
 * ptt_pixel: pupil flip on axis 0; BFGS positions and defocus,
@@ -77,7 +77,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
-from functools import partial
+from functools import cached_property, partial
 from itertools import product
 from pathlib import Path
 from threading import RLock
@@ -231,6 +231,8 @@ class FitConfig:
             object.__setattr__(self, "psf_npixels", self.fit_npix)
         if self.orientation not in ("pupil_flip", "output_flip"):
             raise ValueError("Unknown optical orientation")
+        if self.opd_phase_sign not in (-1, 1):
+            raise ValueError("opd_phase_sign must be -1 or 1")
         for name in (
             "fit_npix",
             "n_wavels",
@@ -1140,6 +1142,36 @@ class FitProblem:
                 display &= ~(mask & ~binary_erosion(mask))
         return display
 
+    @cached_property
+    def position_scales(self):
+        c = self.config
+        scales = {
+            "positions_wlp8_xy": c.position_scale,
+            "positions_wlm8_xy": c.position_scale,
+        }
+        if c.bfgs_defocus:
+            scales.update(
+                defocus_wlp8_val=c.defocus_scale, defocus_wlm8_val=c.defocus_scale
+            )
+        return scales
+
+    @cached_property
+    def position_value_and_grad(self):
+        """Jitted (x, params) -> loss and gradient for _run_positions.
+
+        x holds the position (and defocus) entries of params divided by
+        position_scales; params is an argument so it is not baked in.
+        """
+        scales = self.position_scales
+        sizes = [int(np.size(self.initial_params[k])) for k in scales]
+
+        def loss(x, params):
+            parts = jnp.split(x, np.cumsum(sizes)[:-1])
+            update = {k: part * scales[k] for k, part in zip(scales, parts)}
+            return self.data_loss({**params, **update})
+
+        return jax.jit(jax.value_and_grad(loss))
+
 
 def load_data(
     wlp8_path,
@@ -1276,6 +1308,7 @@ class _ScipyObjective:
         self.x = None
         self.value = None
         self.grad = None
+        self.last_finite = None
 
     def __call__(self, x):
         x = np.asarray(x, dtype=np.float64)
@@ -1287,10 +1320,16 @@ class _ScipyObjective:
                 np.asarray(grad, dtype=np.float64),
             )
             if not np.isfinite(self.value) or not np.all(np.isfinite(self.grad)):
-                raise FloatingPointError(
-                    f"Non-finite loss/gradient in {self.history.name}"
-                )
-            self.history.eval_losses.append(self.value)
+                if self.last_finite is None:
+                    raise FloatingPointError(
+                        f"Non-finite loss/gradient in {self.history.name}"
+                    )
+                # inf/NaN make L-BFGS-B stop; a finite penalty makes it back off.
+                self.value = self.last_finite + 1e3 * (abs(self.last_finite) + 1)
+                self.grad = np.zeros_like(x)
+            else:
+                self.last_finite = self.value
+                self.history.eval_losses.append(self.value)
         return self.value, self.grad.copy()
 
 
@@ -1440,7 +1479,6 @@ def _run_pixel_initial_stage(problem, histories):
     h = StageHistory("Stage 1 — SGD defocus and positions", "SGD")
     histories.append(h)
     started = time.perf_counter()
-    h.initial_loss = float(step(params, state)[0])  # reuses the compiled step
     with tqdm(total=c.stage1_sgd_steps, desc=h.name, disable=not c.progress) as bar:
         for _ in range(c.stage1_sgd_steps):
             value, grad_norm, new_params, state = step(params, state)
@@ -1463,6 +1501,7 @@ def _run_pixel_initial_stage(problem, histories):
             params = new_params
             bar.set_postfix(loss=f"{float(value):.6e}", refresh=False)
             bar.update(1)
+    h.initial_loss = h.losses[0]
     h.elapsed_seconds = time.perf_counter() - started
     if c.show_plots:
         h.plot()
@@ -1474,14 +1513,7 @@ def _run_positions(problem, params, histories, maxiter, name):
     if maxiter == 0:
         return params
     c = problem.config
-    scales = {
-        "positions_wlp8_xy": c.position_scale,
-        "positions_wlm8_xy": c.position_scale,
-    }
-    if c.bfgs_defocus:
-        scales.update(
-            defocus_wlp8_val=c.defocus_scale, defocus_wlm8_val=c.defocus_scale
-        )
+    scales = problem.position_scales
     sizes = [int(np.size(params[k])) for k in scales]
     x0 = np.concatenate([np.ravel(params[k]) / v for k, v in scales.items()])
 
@@ -1492,7 +1524,9 @@ def _run_positions(problem, params, histories, maxiter, name):
             **{k: part * scales[k] for k, part in zip(scales, parts)},
         }
 
-    evaluate = jax.jit(jax.value_and_grad(lambda x: problem.data_loss(unpack(x))))
+    def evaluate(x):
+        return problem.position_value_and_grad(x, params)
+
     result = _run_optimizer(
         evaluate,
         x0,
