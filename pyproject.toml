@@ -29,7 +29,7 @@ dependencies = [
   "equinox>=0.13.8",
   "zodiax>=0.5.0",
   "optax>=0.2.8",
-  "dLux>=0.16.0",
+  "dLux>=0.15.1",
   "scikit-image",
   "tqdm",
   "matplotlib",

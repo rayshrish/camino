@@ -1,4 +1,4 @@
-"""Layers behave correctly against the dLux 0.16 API."""
+"""Layers behave correctly against the phasor-based dLux (>=0.15.1) API."""
 
 import jax
 
