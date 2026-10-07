@@ -70,7 +70,8 @@ MODULE_GROUPS = {
             "filters",
             [
                 "calc_throughput",
-                "NonNormalisedClippedPolySpectrum",
+                "spectrum_shape",
+                "spectrum_weights",
                 "eval_poly_log10",
             ],
         ),

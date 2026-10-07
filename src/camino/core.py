@@ -22,7 +22,6 @@ import equinox as eqx
 import jax
 import jax.nn as jnn
 import jax.numpy as jnp
-import jax.scipy as jsp
 import numpy as np
 import numpy as onp
 import pandas as pd
@@ -74,7 +73,8 @@ __all__ = [
     "get_pupil",
     "get_filter_test",
     "calc_throughput",
-    "NonNormalisedClippedPolySpectrum",
+    "spectrum_shape",
+    "spectrum_weights",
     "ModelFit",
     "SinglePointFilterFit",
     "BaseModeller",
@@ -983,59 +983,48 @@ def _load_filter_table(path_str):
     return wl, tp
 
 
+@functools.lru_cache(maxsize=None)
+def _binned_throughput(path_str, nwavels):
+    """Exact integral of the piecewise-linear throughput over `nwavels` equal bins."""
+    wl, tp = _load_filter_table(path_str)
+    edges = onp.linspace(wl.min(), wl.max(), nwavels + 1)
+    areas = onp.empty(nwavels)
+    for i in range(nwavels):
+        inside = wl[(edges[i] < wl) & (wl < edges[i + 1])]
+        grid = onp.concatenate([[edges[i]], inside, [edges[i + 1]]])
+        areas[i] = onp.trapezoid(onp.interp(grid, wl, tp), grid)
+    wavels = 0.5 * (edges[:-1] + edges[1:]) * 1e-10
+    weights = areas / areas.sum()
+    wavels.setflags(write=False)
+    weights.setflags(write=False)
+    return wavels, weights
+
+
 def calc_throughput(filt, nwavels=1, filters_dir=None):
     """Return wavelength bins and normalised throughput weights for a filter.
 
     Tables are two-column ``wavelength[Angstrom] throughput`` files, looked up as
     ``{FILTER}.dat`` in `filters_dir` or in the bundled ``camino/data`` directory.
     `filt` may also be a ``pathlib.Path`` to a table file. Returned wavelengths
-    are in metres.
+    are in metres, and each weight is the exact integral of the throughput over
+    its wavelength bin.
     """
     path = _resolve_filter_file(filt, filters_dir=filters_dir)
-    wl_array, throughput_array = _load_filter_table(str(path))
-    wl = jnp.asarray(wl_array)
-    tp = jnp.asarray(throughput_array)
-
-    edges = jnp.linspace(wl.min(), wl.max(), nwavels + 1)
-    wavels = jnp.linspace(wl.min(), wl.max(), 2 * nwavels + 1)[1::2]
-
-    areas = []
-    for i in range(nwavels):
-        cond = (edges[i] < wl) & (wl < edges[i + 1])
-        throughput = jnp.where(cond, tp, 0.0)
-        areas.append(jsp.integrate.trapezoid(y=throughput, x=wl))
-    areas = jnp.stack(areas)
-    weights = areas / areas.sum()
-
-    wavels = wavels * 1e-10
-    return wavels, weights
+    wavels, weights = _binned_throughput(str(path), int(nwavels))
+    return jnp.asarray(wavels), jnp.asarray(weights)
 
 
-class NonNormalisedClippedPolySpectrum:
-    """Evaluate a log10-space polynomial spectrum on a wavelength grid."""
+def spectrum_shape(wv, coeffs):
+    """Relative source spectrum on wavelengths `wv`: a log10-space polynomial in wv/mean(wv) - 1."""
+    log10_I = eval_poly_log10(wv / jnp.mean(wv) - 1.0, coeffs)
+    I = jnp.power(10.0, log10_I - jnp.mean(log10_I))
+    return jnp.clip(jnp.where(jnp.isfinite(I), I, 0.0), 0.0, jnp.inf)
 
-    def __init__(self, x: jnp.ndarray, coeffs: jnp.ndarray, clip_nonneg: bool = False):
-        """Create a polynomial spectrum evaluator from a coefficient vector."""
-        self.x = jnp.asarray(x, dtype=float)
-        self.coeffs = jnp.asarray(coeffs, dtype=float)
-        self.clip_nonneg = clip_nonneg
-        if self.coeffs.ndim != 1:
-            raise ValueError("Coefficients must be a 1D array.")
 
-    def _poly(self, x):
-        """Evaluate the polynomial at x using Horner's method."""
-        w = 0.0
-        for c in self.coeffs[::-1]:
-            w = w * x + c
-        return w
-
-    @property
-    def weights(self):
-        """Return the non-normalised intensity weights at the stored x coordinates."""
-        inten = jnp.power(10.0, jax.vmap(self._poly)(self.x))
-        if self.clip_nonneg:
-            inten = jnp.clip(inten, 0.0, None)
-        return inten
+def spectrum_weights(wv, filt, coeffs):
+    """Source spectrum times filter throughput `filt`, normalised to sum to 1."""
+    weights = filt * spectrum_shape(wv, coeffs)
+    return weights / jnp.sum(weights)
 
 
 class ModelFit(zdx.Base):
@@ -1207,41 +1196,18 @@ class SinglePointFilterFit(ModelFit):
 
         # 2) Position
         pos = model.get(exposure.fit.map_param(exposure, "positions"))
-        source = source.set("position", pos * dlu.arcsec2rad(0.031))
+        pixel_scale = dlu.arcsec2rad(model.optics.psf_pixel_scale)
+        source = source.set("position", pos * pixel_scale)
 
         # 3) Polynomial spectrum in log10 space
         wv, filt = calc_throughput(exposure.filter, nwavels=nw)
-        wv = jnp.asarray(wv)  # shape (nw,)
-        filt = jnp.asarray(filt)
-        filt = filt / (jnp.sum(filt) + 1e-12)  # base: normalised filter throughput
-
-        # --- Get polynomial coefficients for this exposure ---
         if "spectrum" in model.params.keys():
-            spec_param = exposure.fit.map_param(exposure, "spectrum")
-            coeffs = model.get(spec_param)
-            coeffs = jnp.atleast_1d(coeffs)  # ensure 1D, handles (1,) or (2,) etc
+            coeffs = jnp.atleast_1d(
+                model.get(exposure.fit.map_param(exposure, "spectrum"))
+            )
         else:
-            coeffs = jnp.zeros((1,), dtype=jnp.float64)  # default = flat in log10
-            # (log10_I = 0 → I = 1)
-
-        # --- Build dimensionless wavelength coordinate ---
-        lambda0 = jnp.mean(wv)
-        x = (wv - lambda0) / (lambda0 + 1e-12)  # shape (nw,)
-
-        # --- Evaluate log10 intensity p(x) and convert to linear ---
-        log10_I = eval_poly_log10(x, coeffs)  # shape (nw,)
-
-        # (Optional, but nice): remove the intercept so polynomial only changes shape,
-        # and the overall normalisation is left to the flux parameter.
-        log10_I = log10_I - jnp.mean(log10_I)
-
-        I = jnp.power(10.0, log10_I)
-        I = jnp.where(jnp.isfinite(I), I, 0.0)  # paranoia against NaN/inf
-        I = jnp.clip(I, 0.0, jnp.inf)
-
-        # --- Combine source SED with filter throughput ---
-        weights = filt * I
-        weights = weights / (jnp.sum(weights) + 1e-12)  # PSF weights sum to 1
+            coeffs = jnp.zeros(1)
+        weights = spectrum_weights(wv, filt, coeffs)
 
         return source.set("spectrum", dl.Spectrum(wv, weights))
 
@@ -1479,22 +1445,13 @@ def check_convergence_from_file(
     params, model_defocus, pup, fname, nw_list=(5, 10), crop_to=128
 ):
     """Compare PSFs across different nwavels for a given WLP8/WLM8 file."""
+    exp = exposure_from_defocus_file(fname, SinglePointFilterFit(nwavels=nw_list[0]))
+    mdl = inject_views_for_pupil(params, pup, exp).inject(model_defocus)
+
     images = {}
-
     for nw in nw_list:
-        fit = SinglePointFilterFit(nwavels=nw)
-        exp = exposure_from_defocus_file(fname, fit)  # new exposure with new fitter
-
-        # ensure model sees correct pos/defocus/flux + shared OPD
-        injected = inject_views_for_pupil(params, pup, exp)
-
-        mdl = injected.inject(model_defocus)
-        img = exp.fit(mdl, exp)
-
-        # match your usual view
-        img = dlu.resize(img, crop_to)
-
-        images[nw] = np.asarray(img, dtype=float)
+        img = SinglePointFilterFit(nwavels=nw)(mdl, exp)
+        images[nw] = np.asarray(dlu.resize(img, crop_to), dtype=float)
 
     ref_nw = list(nw_list)[-1]
     ref_img = images[ref_nw]
@@ -1536,11 +1493,7 @@ def check_poly_vs_mono(model, exposure, nw=20, plot=False, tol=1e-3, label=""):
     # Build wavelength grid + filter
     wv, filt = calc_throughput(exposure.filter, nwavels=nw)  # wv [m], filt shape (nw,)
 
-    # Evaluate polynomial spectrum on x ∈ [-1, 1]
-    x = jnp.linspace(-1.0, 1.0, nw)
-    inten = NonNormalisedClippedPolySpectrum(x, coeffs).weights
-    # If your implementation expects strictly-positive intensities:
-    # inten = 10.0 ** inten
+    inten = spectrum_shape(wv, jnp.atleast_1d(coeffs))
 
     flat = jnp.ones_like(inten)
     rel_std = float(jnp.std(inten / jnp.mean(inten)))
@@ -1588,22 +1541,16 @@ def weights_used_by_fit(params, exposure, nw=20):
 
     # If spectrum isn't in params, it's mono/flat for this diagnostic
     if ("spectrum" not in params.params) and (not hasattr(params, "spectrum")):
-        shaped = np.asarray(filt)  # flat spectrum × filter
-        return wv, shaped
-
-    # Otherwise, read coeffs from the spectrum dict
-    k_spec = exposure.fit.get_key(exposure, "spectrum")
-
-    # support both access patterns
-    if "spectrum" in params.params:
-        coeffs = params.params["spectrum"][k_spec]
+        coeffs = jnp.zeros(1)
     else:
-        coeffs = params["spectrum"][k_spec]
+        k_spec = exposure.fit.get_key(exposure, "spectrum")
+        # support both access patterns
+        if "spectrum" in params.params:
+            coeffs = params.params["spectrum"][k_spec]
+        else:
+            coeffs = params["spectrum"][k_spec]
 
-    x = jnp.linspace(-1.0, 1.0, nw)
-    inten = NonNormalisedClippedPolySpectrum(x, coeffs).weights
-    shaped = np.asarray(inten * filt)
-    return wv, shaped
+    return wv, np.asarray(spectrum_weights(wv, filt, jnp.atleast_1d(coeffs)))
 
 
 def is_curve_not_flat(shaped, tol=1e-3):

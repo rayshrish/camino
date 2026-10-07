@@ -85,3 +85,41 @@ def test_calc_throughput_accepts_explicit_table_path(filters_dir):
 def test_calc_throughput_rejects_path_strings(filters_dir):
     with pytest.raises(ValueError, match="Invalid filter name"):
         camino.calc_throughput(str(filters_dir / "F212N.dat"), nwavels=2)
+
+
+def test_flat_table_gives_equal_weights(tmp_path):
+    table = tmp_path / "FLAT.dat"
+    wl = np.linspace(20000.0, 22000.0, 11)
+    np.savetxt(table, np.column_stack([wl, np.full_like(wl, 3.0)]))
+
+    wv, weights = camino.calc_throughput(table, nwavels=7)
+
+    np.testing.assert_allclose(np.asarray(weights), 1 / 7, rtol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(wv), np.linspace(20000.0, 22000.0, 15)[1::2] * 1e-10
+    )
+
+
+@pytest.mark.parametrize("nwavels", [1, 3, 8])
+def test_bin_areas_sum_to_the_full_integral(filters_dir, nwavels):
+    path = filters_dir / "F212N.dat"
+    wl, tp = np.loadtxt(path, unpack=True)
+    _, weights = camino.core._binned_throughput(str(path), nwavels)
+
+    edges = np.linspace(wl.min(), wl.max(), nwavels + 1)
+    fine = np.unique(np.concatenate([wl, edges]))
+    y = np.interp(fine, wl, tp)
+    cumulative = np.concatenate(
+        [[0.0], np.cumsum(np.diff(fine) * (y[1:] + y[:-1]) / 2)]
+    )
+    expected = np.diff(np.interp(edges, fine, cumulative))
+    np.testing.assert_allclose(weights, expected / expected.sum(), rtol=1e-12)
+
+
+def test_binned_throughput_is_cached_and_read_only(filters_dir):
+    path = str(filters_dir / "F212N.dat")
+    first = camino.core._binned_throughput(path, 4)
+
+    assert camino.core._binned_throughput(path, 4) is first
+    with pytest.raises(ValueError):
+        first[1][0] = 0.0

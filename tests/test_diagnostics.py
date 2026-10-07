@@ -147,6 +147,8 @@ def test_check_convergence_uses_the_injected_params(monkeypatch):
     base = _Params()
     injected = _Params()
 
+    loads = []
+
     class _Fit:
         def __init__(self, nwavels=1):
             self.nwavels = nwavels
@@ -164,14 +166,18 @@ def test_check_convergence_uses_the_injected_params(monkeypatch):
 
     monkeypatch.setattr(camino.core, "inject_views_for_pupil", _fake_inject_views)
     monkeypatch.setattr(camino.core, "SinglePointFilterFit", _Fit)
-    monkeypatch.setattr(
-        camino.core, "exposure_from_defocus_file", lambda fname, fit: _Exposure(fit)
-    )
+
+    def _fake_load(fname, fit):
+        loads.append(fname)
+        return _Exposure(fit)
+
+    monkeypatch.setattr(camino.core, "exposure_from_defocus_file", _fake_load)
 
     results, images = camino.check_convergence_from_file(
         base, object(), "WLP8", "unused.fits", nw_list=(2, 4), crop_to=8
     )
 
-    assert injected_into == [injected, injected]
+    assert loads == ["unused.fits"]
+    assert injected_into == [injected]
     assert set(images) == {2, 4}
     assert results[(2, 4)] == pytest.approx(0.0)
