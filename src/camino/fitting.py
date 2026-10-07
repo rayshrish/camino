@@ -358,43 +358,14 @@ class StageHistory:
 
 
 @contextmanager
-def _local_filter(filter_path, filter_name, fit_mode):
+def _local_filter(filter_path, filter_name):
     """Scope the legacy CAMINO filter redirection to this fit only."""
     with _FILTER_LOCK:
         original = cam.calc_throughput
-        original_unwrapped = getattr(
-            cam, "_notebook_original_calc_throughput", original
-        )
-        if fit_mode == "pixel":
-            # Exact Angstrom/bin-integration convention in the pixel notebook.
-            wl_np, tp_np = np.loadtxt(filter_path, unpack=True)
-            if (
-                wl_np.ndim != 1
-                or not np.all(np.isfinite(wl_np))
-                or not np.all(np.isfinite(tp_np))
-            ):
-                raise ValueError("Filter table must have two finite columns")
-            wl, tp = jnp.asarray(wl_np), jnp.asarray(tp_np)
 
-            def local_throughput(filt, nwavels=1):
-                edges = jnp.linspace(wl.min(), wl.max(), nwavels + 1)
-                wavels = jnp.linspace(wl.min(), wl.max(), 2 * nwavels + 1)[1::2]
-                areas = jnp.stack(
-                    [
-                        jsp.integrate.trapezoid(
-                            y=jnp.where((edges[i] < wl) & (wl < edges[i + 1]), tp, 0.0),
-                            x=wl,
-                        )
-                        for i in range(nwavels)
-                    ]
-                )
-                return wavels * 1e-10, areas / areas.sum()
-
-        else:
-            # Preserve the PTT notebook's use of CAMINO's own throughput method.
-            def local_throughput(filt, nwavels=1):
-                path = Path(filter_path) if str(filt) == filter_name else filt
-                return original_unwrapped(path, nwavels=nwavels)
+        def local_throughput(filt, nwavels=1):
+            path = Path(filter_path) if str(filt) == filter_name else filt
+            return original(path, nwavels=nwavels)
 
         cam.calc_throughput = local_throughput
         try:
@@ -983,9 +954,7 @@ class FitProblem:
         return tuple(int(x) for x in np.unique(self.segment_labels) if x > 0)
 
     def filter_context(self):
-        return _local_filter(
-            self.paths["filter"], self.config.filter_name, self.config.fit_mode
-        )
+        return _local_filter(self.paths["filter"], self.config.filter_name)
 
     def ptt_project(self, pixel_nm):
         """Split a pixel map into (PTT coefficients, orthogonal remainder)."""
@@ -1206,7 +1175,7 @@ def load_data(
     if missing:
         raise FileNotFoundError("Missing input files: " + ", ".join(missing))
     jax.config.update("jax_enable_x64", True)
-    with _local_filter(paths["filter"], c.filter_name, c.fit_mode):
+    with _local_filter(paths["filter"], c.filter_name):
         # FITS arrays are often big-endian; JAX requires native-endian dtypes.
         primary = jnp.asarray(
             np.asarray(fits.getdata(paths["pupil"]), dtype=np.float64)
