@@ -34,7 +34,6 @@ from scipy.ndimage import center_of_mass, gaussian_filter
 
 import dLux as dl
 import dLux.utils as dlu
-from dLux.layers.optical_layers import OpticalLayer
 
 jax.config.update("jax_enable_x64", True)
 
@@ -216,7 +215,7 @@ def apply_pupil_curvature(wf, R_m):
     # phase = (pi / (lambda * R)) * r^2   [radians]
     phase = jnp.pi * r2 / (wf.wavelength * R_m)
 
-    return wf.set("phase", wf.phase + phase)
+    return wf.add_phase(phase)
 
 
 def tv_norm(x):
@@ -559,7 +558,7 @@ def plane_to_plane(wf, distance, pad=2):
     fft_wf = _fft(wf.phasor, pad=pad)
     tf = transfer(wf, distance, pad=pad)
     phasor = dlu.resize(_ifft(fft_wf * tf), wf.npixels)
-    return wf.set(["amplitude", "phase"], [jnp.abs(phasor), jnp.angle(phasor)])
+    return wf.set(phasor=phasor)
 
 
 def err_poisson_dn(
@@ -654,7 +653,7 @@ class Rotate:
         start = -self.diameter / 2.0 + step / 2.0
         return (coords - start) / step
 
-    def apply(self, PSF_or_array: Any) -> Any:
+    def __call__(self, PSF_or_array: Any) -> Any:
         """
         If input has `.data` and `.set("data", ...)`, returns PSF.set(...).
         Otherwise returns rotated array.
@@ -693,10 +692,6 @@ class Rotate:
             return PSF_or_array.set("data", rotated)
         return rotated
 
-    # Optional: make it callable like a "layer"
-    def __call__(self, x: Any) -> Any:
-        return self.apply(x)
-
 
 class JWSTPrimary(dl.Optic):
     """
@@ -709,7 +704,7 @@ class JWSTPrimary(dl.Optic):
     pixelscale: float
 
     def __init__(
-        self: OpticalLayer,
+        self,
         transmission: Array = None,
         opd: Array = None,
         pixelscale: float = None,
@@ -727,17 +722,6 @@ class JWSTPrimary(dl.Optic):
         """
         self.pixelscale = pixelscale
         super().__init__(transmission=transmission, opd=opd, normalise=True)
-
-    def apply(self, wavefront):
-        # Apply transmission and normalise while keeping everything in JAX.
-        amplitude = wavefront.amplitude * self.transmission
-        amplitude /= jnp.linalg.norm(amplitude)
-
-        # Apply phase
-        phase = wavefront.phase + wavefront.wavenumber * self.opd
-
-        # Update and return
-        return wavefront.set(["amplitude", "phase"], [amplitude, phase])
 
 
 def arr2pix(coords, pscale=1):
@@ -882,7 +866,7 @@ class ApplySensitivities(dl.layers.detector_layers.DetectorLayer):
         bc_sens_map = self.SRF[None, :, None, :] * self.FF[:, None, :, None]
         return bc_sens_map.reshape((npix * oversample, npix * oversample))
 
-    def apply(self, PSF):
+    def __call__(self, PSF):
         return PSF * self.sensitivity_map
 
 
@@ -900,18 +884,13 @@ class PixelAnisotropy(dl.layers.detector_layers.DetectorLayer):
         self.order = int(order)
 
     def __getattr__(self, key):
-        if hasattr(self.transform, key):
+        if key != "transform" and hasattr(self.transform, key):
             return getattr(self.transform, key)
         raise AttributeError(f"PixelAnisotropy has no attribute {key}")
 
-    def __call__(self, x):
-        return self.apply(x)
-
-    def apply(self, PSF):
+    def __call__(self, PSF):
         npix = PSF.data.shape[0]
-        transformed = self.transform.apply(
-            dlu.pixel_coords(npix, npix * PSF.pixel_scale)
-        )
+        transformed = self.transform(dlu.pixel_coords(npix, npix * PSF.pixel_scale))
         coords = jnp.roll(pix2arr(transformed, PSF.pixel_scale), 1, axis=0)
         interp_fn = lambda x: map_coordinates_2d(
             x, coords, order=self.order, mode="constant", cval=0.0

@@ -503,13 +503,13 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
 
     def pupil_field(self, wavelength, offset):
         """Complex pupil field after every layer, the phase sign and tilt."""
-        wf = dl.Wavefront(self.wf_npixels, self.diameter, wavelength)
+        wf = dl.Wavefront(wavelength, self.wf_npixels, diameter=self.diameter)
 
         for layer in self.layers.values():
-            wf *= layer
+            wf = layer(wf)
 
         if self.opd_phase_sign == -1.0:
-            wf = wf.set(["phase"], [-wf.phase])
+            wf = wf.set(phasor=wf.phasor.conj())
 
         return wf.tilt(offset).phasor
 
@@ -583,17 +583,13 @@ class NIRCamFresnelOptics(dl.AngularOpticalSystem):
         else:
             u_out = self.segment.image_field(self, u_in, x_in, wavelength)
 
-        n_out = self.psf_npixels * self.oversample
         theta_pix = dlu.arcsec2rad(self.psf_pixel_scale) / self.oversample
         if self.orientation == "output_flip":
             u_out = jnp.flip(u_out, axis=0)
         if not return_wf:
             # PSF = |u|^2; avoids abs/angle and the output phase factors.
             return u_out.real**2 + u_out.imag**2
-        return dl.Wavefront(n_out, n_out * theta_pix, wavelength).set(
-            ["amplitude", "phase"],
-            [jnp.abs(u_out), jnp.angle(u_out)],
-        )
+        return dl.Wavefront.from_phasor(u_out, wavelength, pixel_scale=theta_pix)
 
 
 class NRCDetectorLong(dl.detectors.LayeredDetector):
@@ -631,12 +627,6 @@ class NRCDetectorLong(dl.detectors.LayeredDetector):
 
         self.layers = dlu.list2dictionary(layers, ordered=True)
         self.dark_current = jnp.array(dark_current, float)
-
-    def apply(self, psf):
-        for layer in self.layers.values():
-            if layer is not None:
-                psf = layer.apply(psf)
-        return psf
 
 
 class NIRCamModel(cam.BaseModeller):
