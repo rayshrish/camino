@@ -10,7 +10,7 @@ import camino
 @pytest.mark.parametrize("dtype", [jnp.float64])
 def test_pixel_anisotropy_keeps_jax_array(dtype):
     psf = dl.PSF(jnp.ones((8, 8), dtype=dtype), pixel_scale=1.0)
-    out = camino.PixelAnisotropy(order=1).apply(psf)
+    out = camino.PixelAnisotropy(order=1)(psf)
     assert isinstance(out.data, jax.Array)
     assert out.data.shape == psf.data.shape
     assert out.data.dtype == jnp.float64
@@ -61,7 +61,7 @@ def test_map_coordinates_2d_is_identity_on_grid_points():
 def test_transfer_and_rotate_keep_expected_shapes():
     coords = jnp.zeros((2, 2, 2), dtype=jnp.float64)
     transfer = camino.transfer_fn(coords, 10, 1.0, 1.0, 1.0)
-    rotated = camino.Rotate(rotation_deg=90.0).apply(
+    rotated = camino.Rotate(rotation_deg=90.0)(
         jnp.arange(9.0, dtype=jnp.float64).reshape(3, 3)
     )
 
@@ -84,21 +84,16 @@ def test_set_array_promotes_leaf_values_to_float64():
 
 
 def test_jwst_primary_normalises_with_jax_norm():
-    wavefront = type("Wavefront", (), {})()
-    wavefront.amplitude = jnp.array([3.0, 4.0], dtype=jnp.float64)
-    wavefront.phase = jnp.zeros_like(wavefront.amplitude)
-    wavefront.wavenumber = jnp.array(1.0, dtype=jnp.float64)
-    wavefront.set = lambda keys, values: {"amplitude": values[0], "phase": values[1]}
+    wavefront = dl.Wavefront(2e-6, 4, diameter=1.0)
+    transmission = jnp.arange(1.0, 17.0, dtype=jnp.float64).reshape(4, 4)
 
-    optic = camino.JWSTPrimary(
-        transmission=jnp.ones_like(wavefront.amplitude),
-        opd=jnp.zeros_like(wavefront.amplitude),
+    out = camino.JWSTPrimary(transmission=transmission, opd=jnp.zeros((4, 4)))(
+        wavefront
     )
-    out = optic.apply(wavefront)
 
-    assert isinstance(out["amplitude"], jax.Array)
-    assert out["amplitude"].dtype == jnp.float64
-    assert jnp.isclose(jnp.linalg.norm(out["amplitude"]), 1.0)
+    assert isinstance(out.phasor, jax.Array)
+    assert out.phasor.dtype == jnp.complex128
+    assert jnp.isclose(out.power, 1.0)
 
 
 def test_map_coordinates_2d_cubic_reproduces_quadratic_in_interior():
